@@ -1,0 +1,23 @@
+[project]
+name = "gdocs-skill"
+version = "0.1.0"
+description = "Google Docs automation skill using official SDK"
+requires-python = ">=3.10"
+
+dependencies = [
+    "google-api-python-client",
+    "google-auth",
+    "google-auth-oauthlib",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: marks tests that hit real Google API (deselect with '-m \"not integration\"')",
+]
