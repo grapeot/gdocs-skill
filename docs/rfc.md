@@ -114,13 +114,22 @@ adhoc_jobs/gdocs_skill/
 ├── docs/
 │   ├── prd.md                  # 产品需求
 │   ├── rfc.md                  # 本文档
+│   ├── skill_google_docs.md    # AI agent 可读的 skill 文件
 │   └── working.md              # Changelog + Lessons Learned
 ├── secrets/                    # OAuth 凭证（.gitignore 排除）
 │   ├── credentials.json        # OAuth 客户端凭证
 │   └── token.json              # 授权后的 token（自动生成）
-├── src/
-│   └── google_docs_client.py   # 核心客户端（SDK 封装）
+├── gdocs/                      # Python 包（可通过 python -m gdocs 调用）
+│   ├── __init__.py
+│   ├── __main__.py             # CLI 入口（argparse）
+│   ├── auth.py                 # OAuth 认证模块
+│   ├── client.py               # GoogleDocsClient（SDK 封装）
+│   └── markdown.py             # Markdown → Google Docs API 转换
+├── tests/
+│   ├── unit/                   # 单元测试
+│   └── integration/            # 集成测试（真实 API）
 ├── .gitignore
+├── pyproject.toml
 └── README.md
 ```
 
@@ -192,7 +201,75 @@ SCOPES = [
 
 选用 `drive.file` 而非 `drive`（完整访问）是遵循最小权限原则：只能访问由本应用创建或用户主动打开的文件。
 
-## 5. API 调用模式
+## 5. Markdown → Google Docs 格式转换
+
+### 5.1 设计动机
+
+Google Docs API 的格式化操作（`updateTextStyle`、`updateParagraphStyle`、`createParagraphBullets`）需要精确的字符索引区间，手工拼装请求非常繁琐且容易出错。为了让 AI agent 能自然地用 Markdown 写入格式化内容，我们实现了一个 Markdown → Google Docs API 请求的转换层。
+
+### 5.2 支持的 Markdown 语法
+
+| Markdown 语法 | Google Docs 对应 | API 请求类型 |
+|---------------|-----------------|-------------|
+| `# 标题` | Heading 1 | `updateParagraphStyle` (HEADING_1) |
+| `## 副标题` | Heading 2 | `updateParagraphStyle` (HEADING_2) |
+| `### 小标题` | Heading 3 | `updateParagraphStyle` (HEADING_3) |
+| `**加粗**` | 加粗 | `updateTextStyle` (bold) |
+| `*斜体*` | 斜体 | `updateTextStyle` (italic) |
+| `***加粗斜体***` | 加粗+斜体 | `updateTextStyle` (bold+italic) |
+| `` `代码` `` | 等宽字体 | `updateTextStyle` (Courier New) |
+| `[文本](url)` | 超链接 | `updateTextStyle` (link) |
+| `- 项目` / `* 项目` | 无序列表 | `createParagraphBullets` |
+| `1. 项目` | 有序列表 | `createParagraphBullets` |
+| `---` / `***` / `___` | 分割线 | `updateParagraphStyle` (CENTER) + `updateTextStyle` (gray, 6pt) |
+| `> 引用文本` | 引用块 | `updateParagraphStyle` (indentStart 36pt + borderLeft gray) |
+
+不支持的语法（后续迭代）：代码块、表格、图片。
+
+### 5.3 转换架构
+
+转换分三个阶段：
+
+**Phase 1: 解析（Parse）** — 将 Markdown 文本按行解析为中间表示（Block + TextSegment）。每行根据前缀判断块类型（标题、列表、段落），然后解析行内格式（加粗、斜体、代码、链接）为 TextSegment 列表。
+
+**Phase 2: 生成纯文本（Flatten）** — 将所有 TextSegment 的纯文本拼接，剥掉 Markdown 语法符号，每个 Block 以 `\n` 结尾。
+
+**Phase 3: 生成请求（Generate）** — 遍历 Block 和 Segment，基于累计字符索引生成 Google Docs API 请求。先生成一个 `insertText` 插入全部纯文本，再生成所有格式化请求。
+
+这种"先插入再格式化"的策略避免了交叉插入导致的索引偏移问题。
+
+### 5.4 索引计算
+
+Google Docs 使用 1-based 索引。`insertText` 在 `start_index`（默认 1）处插入文本后，后续格式化请求的 `range.startIndex` 和 `range.endIndex` 基于插入后的文档状态计算。对于多 Tab 文档，所有 range 和 location 都需要包含 `tabId`。
+
+## 6. CLI 设计
+
+### 6.1 设计动机
+
+原来 AI agent 使用此 skill 时需要现场写 Python 代码（导入模块、创建 client、调用方法）。这要求 agent 正确处理 venv 激活、import 路径、credentials 目录等细节，容易出错。CLI 将所有细节封装为子命令，agent 只需执行一行 bash 命令。
+
+### 6.2 入口方式
+
+选择 `python -m gdocs` 而非安装 console_scripts，原因：不需要全局安装，项目完全自包含，和现有 venv 结构一致。
+
+### 6.3 输出规范
+
+所有输出为 JSON（`ensure_ascii=False, indent=2`），便于 AI agent 和脚本解析。错误输出到 stderr，格式为 `{"error": "message"}`，exit code 为 1。
+
+### 6.4 子命令列表
+
+| 子命令 | 用途 | 示例 |
+|--------|------|------|
+| `publish <file>` | 发布 Markdown 文件为 Google Doc | `python -m gdocs publish report.md --title "报告"` |
+| `create` | 创建空文档 | `python -m gdocs create --title "新文档"` |
+| `search <query>` | 搜索文档 | `python -m gdocs search "前线"` |
+| `share <doc_id>` | 分享文档 | `python -m gdocs share DOC_ID --email user@example.com` |
+| `title <doc_id> <title>` | 修改标题 | `python -m gdocs title DOC_ID "新标题"` |
+| `link <doc_id>` | 获取链接 | `python -m gdocs link DOC_ID --public` |
+| `tab rename` | 重命名 Tab | `python -m gdocs tab rename DOC_ID TAB_ID "新名"` |
+| `tab replace` | 替换 Tab 内容 | `python -m gdocs tab replace DOC_ID TAB_ID file.md` |
+
+## 7. API 调用模式
 
 ### 5.1 创建带 Tab 的文档
 
@@ -241,15 +318,15 @@ drive_service.permissions().create(
 | 搜索结果不完整 | 遗漏文档 | 避免 `corpora='allDrives'`，检查 `incompleteSearch` 字段 |
 | credentials.json 泄露 | 安全事故 | `.gitignore` 排除，文件权限 `600` |
 
-## 7. 后续迭代方向
+## 8. 后续迭代方向
 
-- 支持富文本格式（表格、图片、样式）
+- 扩展 Markdown 支持（代码块、表格）
 - 支持文档模板（从模板创建新文档）
 - 支持 Google Sheets 基础操作
 - 批量操作优化（一次 batchUpdate 完成多个操作）
 - 嵌套 tab 支持（子 tab）
 
-## 8. 参考资料
+## 9. 参考资料
 
 - [Google Docs API Reference](https://developers.google.com/workspace/docs/api/reference/rest)
 - [Google Docs Tabs Guide](https://developers.google.com/workspace/docs/api/how-tos/tabs)

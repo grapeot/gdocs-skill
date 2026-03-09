@@ -23,6 +23,33 @@
   - test_auth.py 中 creds.to_json() 返回 MagicMock 而非字符串 → 设置 return_value
 - 单元测试 20/20 全部通过
 - 完成集成测试 tests/integration/test_integration.py（9 个测试），覆盖完整流程：创建文档 → 创建带 Tab 文档 → 修改内容 → 重命名 → 搜索 → 分享 → 获取链接 → 清理
+- 集成测试全部通过（8 passed, 1 skipped — share_document 因未设 GDOCS_TEST_EMAIL 跳过）
+- 手动测试创建带格式的文档成功（标题、加粗、斜体、列表），确认 Google Docs API 格式化请求正常工作
+- 实现 src/markdown.py（289 行）— Markdown → Google Docs API 请求转换器，三阶段架构（解析→纯文本→请求生成）
+  - 支持：H1/H2/H3 标题、加粗、斜体、加粗斜体、行内代码、超链接、无序列表、有序列表
+  - 纯 Python 实现，无第三方 Markdown 解析库依赖
+- 更新 client.py — create_document 和 modify_document 新增 content_format 参数（"plain" / "markdown"）
+- 更新 PRD：新增 Markdown 格式支持（P0）和用户场景
+- 更新 RFC：新增 Markdown → Google Docs 格式转换设计章节
+- Security check 通过：git 历史中无敏感信息，.gitignore 正确覆盖所有凭证文件
+- 创建 docs/skill_google_docs.md（AI agent 可读的 skill 文件）
+- 在 rules/skills/ 创建 symlink 并更新 INDEX.md
+- GitHub 创建 private repo：https://github.com/grapeot/gdocs-skill（未 push）
+- 新增 `rename_tab(doc_id, tab_id, new_title)` 方法，通过 `updateDocumentTabProperties` API 实现 tab 重命名
+- 新增 `replace_tab_content(doc_id, tab_id, text, content_format)` 方法，先删除旧内容再写入新内容，支持 Markdown 格式
+- 手动测试：将 ai_frontline_20260307.md 的内容替换到 Tab 1，重命名为 "AI 前线 2026-03-07"
+- 新增 Markdown 分割线（`---`）支持：由于 Google Docs 没有原生 HR，实现为 ━×30 灰色居中文字（6pt），视觉效果接近分割线
+- 新增 Markdown 引用块（`> text`）支持：通过 `indentStart` 36pt + `borderLeft` 灰色实线实现
+- 手动测试分享功能：成功分享文档给 grapeot@outlook.com 作为 editor
+- 删除空 Tab 1（`deleteTab` API）
+- 单元测试扩展至 54 个（新增 rename_tab、replace_tab_content、HR/blockquote 测试）
+- 重命名 `src/` → `gdocs/` 包，支持 `python -m gdocs` CLI 调用方式
+- 更新所有 import 路径（测试文件、内部引用）从 `src.` → `gdocs.`
+- 新增 CLI 入口 `gdocs/__main__.py`（argparse），所有功能可通过 `python -m gdocs <subcommand>` 调用
+- CLI 子命令：publish、create、search、share、title、link、tab rename、tab replace
+- 所有 CLI 输出为 JSON 格式，便于 AI agent 程序化处理
+- 重写 skill 文件（`docs/skill_google_docs.md`），从 Python 代码示例改为 CLI 命令示例
+- 更新 PRD 新增 CLI 场景和功能、RFC 新增 CLI 设计章节和目录结构
 
 ## Lessons Learned
 
@@ -35,3 +62,8 @@
 - auth.py 中的 isinstance(mock, Credentials) 在单元测试中永远返回 False（MagicMock 不是 Credentials 的实例）。对于类型安全来说，用 typing.cast 替代运行时 isinstance 检查更适合可测试性
 - Google Drive 搜索索引有延迟，集成测试中搜索新创建/重命名的文档需要加重试逻辑（每次 2s，最多 6 次）
 - OAuth consent screen 配置为 External + 未发布状态时，**必须**将用户 Gmail 加入 Test users 列表，否则授权会直接返回 `Error 403: access_denied`（而非显示 "This app isn't verified" 的 Continue 页面）。这一步容易被忽略
+- Tab 重命名的 API 格式：`tabId` 要放在 `tabProperties` 内部（`{"updateDocumentTabProperties": {"tabProperties": {"tabId": "...", "title": "..."}, "fields": "title"}}`），不是作为 `tabProperties` 的兄弟字段。通过 Google Docs Discovery API schema 确认
+- Google Docs 没有原生的水平分割线插入 API，需要用替代方案模拟。最终选择 ━（U+2501 BOX DRAWINGS HEAVY HORIZONTAL）×30 + 灰色 6pt 居中对齐
+- 引用块通过 `updateParagraphStyle` 设置左缩进 + 左边框实现，`borderLeft` 需要包含 `color`、`width`、`dashStyle`、`padding` 四个子字段
+- CLI 比现场写 Python 更适合 AI agent 调用：减少 import/venv/path 出错机会，一行命令完成操作，JSON 输出便于程序化处理
+- 包从 `src/` 重命名为 `gdocs/` 后，`python -m gdocs` 自动寻找 `gdocs/__main__.py`，无需额外安装步骤

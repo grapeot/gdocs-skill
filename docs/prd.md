@@ -36,6 +36,18 @@ AI agent 通过 Drive API 更新文档元数据中的 name 字段。
 
 AI agent 获取文档的 `webViewLink`，如果需要还可以将文档设置为"任何拥有链接的人可查看"模式。
 
+### 场景 6：用 Markdown 写入带格式的内容
+
+用户说："帮我创建一个文档，标题叫'周报'，内容用 Markdown 写。"
+
+AI agent 接收 Markdown 格式的文本，自动转换为 Google Docs 原生格式（标题、加粗、斜体、列表、超链接、行内代码等），写入文档。支持在创建文档和修改文档时使用。
+
+### 场景 7：通过 CLI 一键发布 Markdown 到 Google Docs
+
+用户说："把 `report.md` 发到 Google Docs。"
+
+AI agent 执行 `python -m gdocs publish report.md --title "报告"`，一行命令完成 Markdown 文件到 Google Docs 的发布。所有输出为 JSON 格式，方便程序化处理。CLI 封装了认证、格式转换、API 调用的全部细节。
+
 ## 3. 功能范围
 
 ### 第一期（MVP）
@@ -44,6 +56,9 @@ AI agent 获取文档的 `webViewLink`，如果需要还可以将文档设置为
 |------|--------|------|
 | 创建文档 | P0 | 支持纯文本和带 Tab 结构的文档 |
 | Tab 管理 | P0 | 创建多个 tab，指定标题、图标、内容 |
+| Markdown 格式支持 | P0 | 内容支持 Markdown 语法，自动转换为 Google Docs 原生格式（标题、加粗、斜体、列表、链接、行内代码、分割线、引用块等） |
+| Tab 管理（重命名/替换内容） | P0 | 重命名 Tab 标题、替换 Tab 内容（清空+写入，支持 Markdown） |
+| CLI 入口 | P0 | `python -m gdocs` 子命令，所有功能可通过命令行调用，JSON 输出 |
 | 搜索文档 | P0 | 按关键词全文搜索，支持按文件夹筛选 |
 | 修改文档内容 | P0 | 向指定 tab 插入/替换文本 |
 | 修改文档标题 | P1 | 通过 Drive API 更新 name 字段 |
@@ -55,7 +70,7 @@ AI agent 获取文档的 `webViewLink`，如果需要还可以将文档设置为
 | 功能 | 原因 |
 |------|------|
 | 删除文档 | 风险太高，手动操作更安全 |
-| 复杂格式排版 | 表格、图片、样式等后续迭代 |
+| 复杂格式排版 | 表格、图片等后续迭代（常见 Markdown 格式已支持，含分割线和引用） |
 | Google Sheets / Slides | 不在本 skill 范围 |
 | 多用户 session 管理 | MVP 只支持单用户 |
 
@@ -95,4 +110,4 @@ AI agent 获取文档的 `webViewLink`，如果需要还可以将文档设置为
 - AI agent 能在 30 秒内完成文档创建（含 tab）
 - 搜索结果准确返回包含目标关键词的文档
 - 分享操作成功后，目标用户能立即访问文档
-- 整个 skill 代码量控制在 300 行以内
+- 整个 skill 核心代码量控制在 500 行以内（含 CLI 入口）

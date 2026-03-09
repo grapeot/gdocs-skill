@@ -7,25 +7,44 @@
 ```
 gdocs_skill/
 ├── docs/
-│   ├── prd.md          # 产品需求文档
-│   ├── rfc.md          # 技术方案 RFC（含调研过程和决策记录）
-│   └── working.md      # Changelog + Lessons Learned
-├── secrets/            # OAuth 凭证（已 gitignore）
+│   ├── prd.md                  # 产品需求文档
+│   ├── rfc.md                  # 技术方案 RFC
+│   ├── skill_google_docs.md    # AI agent 可读的 skill 文件
+│   └── working.md              # Changelog + Lessons Learned
+├── secrets/                    # OAuth 凭证（已 gitignore）
 │   ├── credentials.json
 │   └── token.json
-├── src/                # 核心实现
-│   └── google_docs_client.py
+├── gdocs/                      # Python 包
+│   ├── __init__.py
+│   ├── __main__.py             # CLI 入口
+│   ├── auth.py                 # OAuth 认证
+│   ├── client.py               # GoogleDocsClient
+│   └── markdown.py             # Markdown → Google Docs 转换
+├── tests/
 ├── .gitignore
+├── pyproject.toml
 └── README.md
 ```
 
 ## 功能概览
 
+- CLI 命令行工具（`python -m gdocs`），所有输出为 JSON
 - 创建文档（支持原生 Tab 结构）
+- 发布 Markdown 文件到 Google Docs（保留格式）
 - 搜索文档（Drive API 全文搜索）
-- 修改文档内容（batchUpdate）
+- 修改文档内容（batchUpdate，支持 Markdown）
+- Tab 管理（重命名、替换内容）
 - 修改文档标题
 - 分享文档（添加用户权限、获取分享链接）
+
+## 快速开始
+
+```bash
+source .venv/bin/activate
+python -m gdocs publish path/to/report.md --title "报告标题"
+python -m gdocs search "关键词"
+python -m gdocs share DOC_ID --email user@example.com
+```
 
 ## 技术选型
 

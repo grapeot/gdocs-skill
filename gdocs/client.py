@@ -9,6 +9,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 from .auth import get_credentials
+from .markdown import markdown_to_requests
 
 
 class GoogleDocsClient:
@@ -24,6 +25,7 @@ class GoogleDocsClient:
         self,
         title: str,
         tabs: list[dict[str, str]] | None = None,
+        content_format: str = "plain",
     ) -> dict[str, str]:
         """Create a new Google Doc, optionally adding document tabs and content."""
         try:
@@ -66,14 +68,18 @@ class GoogleDocsClient:
                     tab_id = added_tabs[index].get("tabProperties", {}).get("tabId")
                     if not isinstance(tab_id, str) or not tab_id:
                         continue
-                    write_requests.append(
-                        {
-                            "insertText": {
-                                "location": {"index": 1, "tabId": tab_id},
-                                "text": content,
+                    if content_format == "markdown":
+                        md_requests, _ = markdown_to_requests(content, tab_id=tab_id, start_index=1)
+                        write_requests.extend(md_requests)
+                    else:
+                        write_requests.append(
+                            {
+                                "insertText": {
+                                    "location": {"index": 1, "tabId": tab_id},
+                                    "text": content,
+                                }
                             }
-                        }
-                    )
+                        )
 
                 if write_requests:
                     self.docs.documents().batchUpdate(
@@ -120,21 +126,80 @@ class GoogleDocsClient:
         except HttpError as exc:
             raise RuntimeError("Failed to search Google Docs") from exc
 
-    def modify_document(self, doc_id: str, text: str, tab_id: str | None = None) -> dict[str, object]:
+    def modify_document(
+        self, doc_id: str, text: str, tab_id: str | None = None, content_format: str = "plain"
+    ) -> dict[str, object]:
         """Insert text into a document, optionally targeting a specific tab."""
-        location: dict[str, object] = {"index": 1}
-        if tab_id:
-            location["tabId"] = tab_id
-
-        request = {"insertText": {"location": location, "text": text}}
+        if content_format == "markdown":
+            requests, _ = markdown_to_requests(text, tab_id=tab_id, start_index=1)
+        else:
+            location: dict[str, object] = {"index": 1}
+            if tab_id:
+                location["tabId"] = tab_id
+            requests = [{"insertText": {"location": location, "text": text}}]
         try:
             self.docs.documents().batchUpdate(
                 documentId=doc_id,
-                body={"requests": [request]},
+                body={"requests": requests},
             ).execute()
             return {"success": True, "doc_id": doc_id}
         except HttpError as exc:
             raise RuntimeError(f"Failed to modify document '{doc_id}'") from exc
+
+    def rename_tab(self, doc_id: str, tab_id: str, new_title: str) -> dict[str, object]:
+        """Rename a document tab."""
+        try:
+            self.docs.documents().batchUpdate(
+                documentId=doc_id,
+                body={"requests": [
+                    {"updateDocumentTabProperties": {
+                        "tabProperties": {"tabId": tab_id, "title": new_title},
+                        "fields": "title",
+                    }}
+                ]},
+            ).execute()
+            return {"success": True, "tab_id": tab_id, "new_title": new_title}
+        except HttpError as exc:
+            raise RuntimeError(f"Failed to rename tab '{tab_id}' in document '{doc_id}'") from exc
+
+    def replace_tab_content(
+        self, doc_id: str, tab_id: str, text: str, content_format: str = "plain"
+    ) -> dict[str, object]:
+        """Replace all content in a tab with new text. Clears existing content first."""
+        try:
+            doc = self.docs.documents().get(
+                documentId=doc_id, includeTabsContent=True,
+            ).execute()
+            end_index = 1
+            for tab in doc.get("tabs", []):
+                if tab.get("tabProperties", {}).get("tabId") == tab_id:
+                    content_elements = tab.get("documentTab", {}).get("body", {}).get("content", [])
+                    if content_elements:
+                        end_index = content_elements[-1].get("endIndex", 1)
+                    break
+
+            delete_requests: list[dict[str, Any]] = []
+            if end_index > 2:
+                delete_requests.append(
+                    {"deleteContentRange": {
+                        "range": {"startIndex": 1, "endIndex": end_index - 1, "tabId": tab_id}
+                    }}
+                )
+
+            if content_format == "markdown":
+                insert_requests, _ = markdown_to_requests(text, tab_id=tab_id, start_index=1)
+            else:
+                insert_requests = [
+                    {"insertText": {"location": {"index": 1, "tabId": tab_id}, "text": text}}
+                ]
+
+            self.docs.documents().batchUpdate(
+                documentId=doc_id,
+                body={"requests": delete_requests + insert_requests},
+            ).execute()
+            return {"success": True, "doc_id": doc_id, "tab_id": tab_id}
+        except HttpError as exc:
+            raise RuntimeError(f"Failed to replace content in tab '{tab_id}'") from exc
 
     def update_title(self, doc_id: str, new_title: str) -> dict[str, object]:
         """Update document title via Drive metadata."""

@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 
 import pytest
 
-from src.client import GoogleDocsClient
+from gdocs.client import GoogleDocsClient
 
 SECRETS_DIR = Path(__file__).resolve().parents[2] / "secrets"
 if not (SECRETS_DIR / "credentials.json").exists():

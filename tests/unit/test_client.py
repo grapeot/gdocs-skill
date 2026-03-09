@@ -8,7 +8,7 @@ import pytest
 from googleapiclient.errors import HttpError
 from unittest.mock import MagicMock, PropertyMock, patch
 
-from src.client import GoogleDocsClient
+from gdocs.client import GoogleDocsClient
 
 
 def _make_http_error(status: int = 500, reason: str = "internal error") -> HttpError:
@@ -32,8 +32,8 @@ def client_env():
             return drive_service
         raise AssertionError(f"Unexpected API requested: {(api_name, version)}")
 
-    with patch("src.client.get_credentials", return_value=creds) as get_creds:
-        with patch("src.client.build", side_effect=_build) as build_fn:
+    with patch("gdocs.client.get_credentials", return_value=creds) as get_creds:
+        with patch("gdocs.client.build", side_effect=_build) as build_fn:
             client = GoogleDocsClient(Path("/tmp/secrets"))
 
     get_creds.assert_called_once_with(Path("/tmp/secrets"))
@@ -275,6 +275,174 @@ def test_get_share_link_public(client_env):
     assert create_kwargs["fileId"] == "public-doc"
     assert create_kwargs["body"]["type"] == "anyone"
     assert create_kwargs["body"]["role"] == "reader"
+
+
+def test_modify_document_markdown(client_env):
+    client, docs_service, _ = client_env
+    docs_service.documents.return_value.batchUpdate.return_value.execute.return_value = {}
+    markdown_requests = [
+        {"insertText": {"location": {"index": 1}, "text": "Title\n"}},
+        {
+            "updateParagraphStyle": {
+                "range": {"startIndex": 1, "endIndex": 7},
+                "paragraphStyle": {"namedStyleType": "HEADING_1"},
+                "fields": "namedStyleType",
+            }
+        },
+    ]
+
+    with patch("gdocs.client.markdown_to_requests", return_value=(markdown_requests, 7)) as md_to_requests:
+        result = client.modify_document("doc-1", "# Title", content_format="markdown")
+
+    assert result == {"success": True, "doc_id": "doc-1"}
+    md_to_requests.assert_called_once_with("# Title", tab_id=None, start_index=1)
+    body = docs_service.documents.return_value.batchUpdate.call_args.kwargs["body"]
+    assert body["requests"] == markdown_requests
+
+
+def test_create_document_with_tabs_markdown(client_env):
+    client, docs_service, _ = client_env
+    tabs = [{"title": "Overview", "content": "# Intro"}]
+    docs_service.documents.return_value.create.return_value.execute.return_value = {
+        "documentId": "doc-tabs-md"
+    }
+    docs_service.documents.return_value.get.return_value.execute.return_value = {
+        "tabs": [{"tabProperties": {"title": "Overview", "tabId": "tab-md-1"}}]
+    }
+    markdown_requests = [
+        {"insertText": {"location": {"index": 1, "tabId": "tab-md-1"}, "text": "Intro\n"}},
+        {
+            "updateParagraphStyle": {
+                "range": {"startIndex": 1, "endIndex": 7, "tabId": "tab-md-1"},
+                "paragraphStyle": {"namedStyleType": "HEADING_1"},
+                "fields": "namedStyleType",
+            }
+        },
+    ]
+
+    with patch("gdocs.client.markdown_to_requests", return_value=(markdown_requests, 7)) as md_to_requests:
+        result = client.create_document("Tabbed Doc", tabs=tabs, content_format="markdown")
+
+    assert result["id"] == "doc-tabs-md"
+    md_to_requests.assert_called_once_with("# Intro", tab_id="tab-md-1", start_index=1)
+    assert docs_service.documents.return_value.batchUpdate.call_count == 2
+    write_call = docs_service.documents.return_value.batchUpdate.call_args_list[1]
+    assert write_call.kwargs["body"]["requests"] == markdown_requests
+
+
+def test_rename_tab(client_env):
+    client, docs_service, _ = client_env
+    docs_service.documents.return_value.batchUpdate.return_value.execute.return_value = {}
+
+    result = client.rename_tab("doc-1", "tab-abc", "新标题")
+
+    assert result == {"success": True, "tab_id": "tab-abc", "new_title": "新标题"}
+    body = docs_service.documents.return_value.batchUpdate.call_args.kwargs["body"]
+    req = body["requests"][0]["updateDocumentTabProperties"]
+    assert req["tabProperties"]["tabId"] == "tab-abc"
+    assert req["tabProperties"]["title"] == "新标题"
+    assert req["fields"] == "title"
+
+
+def test_replace_tab_content_plain(client_env):
+    client, docs_service, _ = client_env
+    docs_service.documents.return_value.get.return_value.execute.return_value = {
+        "tabs": [
+            {
+                "tabProperties": {"tabId": "tab-xyz"},
+                "documentTab": {
+                    "body": {
+                        "content": [
+                            {"endIndex": 1},
+                            {"endIndex": 50},
+                        ]
+                    }
+                },
+            }
+        ]
+    }
+    docs_service.documents.return_value.batchUpdate.return_value.execute.return_value = {}
+
+    result = client.replace_tab_content("doc-2", "tab-xyz", "New content")
+
+    assert result == {"success": True, "doc_id": "doc-2", "tab_id": "tab-xyz"}
+    body = docs_service.documents.return_value.batchUpdate.call_args.kwargs["body"]
+    requests = body["requests"]
+    assert "deleteContentRange" in requests[0]
+    delete_range = requests[0]["deleteContentRange"]["range"]
+    assert delete_range["startIndex"] == 1
+    assert delete_range["endIndex"] == 49
+    assert delete_range["tabId"] == "tab-xyz"
+    assert "insertText" in requests[1]
+    assert requests[1]["insertText"]["text"] == "New content"
+    assert requests[1]["insertText"]["location"]["tabId"] == "tab-xyz"
+
+
+def test_replace_tab_content_markdown(client_env):
+    client, docs_service, _ = client_env
+    docs_service.documents.return_value.get.return_value.execute.return_value = {
+        "tabs": [
+            {
+                "tabProperties": {"tabId": "tab-md"},
+                "documentTab": {
+                    "body": {
+                        "content": [
+                            {"endIndex": 1},
+                            {"endIndex": 20},
+                        ]
+                    }
+                },
+            }
+        ]
+    }
+    docs_service.documents.return_value.batchUpdate.return_value.execute.return_value = {}
+
+    markdown_requests = [
+        {"insertText": {"location": {"index": 1, "tabId": "tab-md"}, "text": "Title\n"}},
+        {
+            "updateParagraphStyle": {
+                "range": {"startIndex": 1, "endIndex": 7, "tabId": "tab-md"},
+                "paragraphStyle": {"namedStyleType": "HEADING_1"},
+                "fields": "namedStyleType",
+            }
+        },
+    ]
+
+    with patch("gdocs.client.markdown_to_requests", return_value=(markdown_requests, 7)) as md_to_requests:
+        result = client.replace_tab_content("doc-3", "tab-md", "# Title", content_format="markdown")
+
+    assert result == {"success": True, "doc_id": "doc-3", "tab_id": "tab-md"}
+    md_to_requests.assert_called_once_with("# Title", tab_id="tab-md", start_index=1)
+    body = docs_service.documents.return_value.batchUpdate.call_args.kwargs["body"]
+    requests = body["requests"]
+    assert "deleteContentRange" in requests[0]
+    assert requests[1:] == markdown_requests
+
+
+def test_replace_tab_content_empty_tab(client_env):
+
+    client, docs_service, _ = client_env
+    docs_service.documents.return_value.get.return_value.execute.return_value = {
+        "tabs": [
+            {
+                "tabProperties": {"tabId": "tab-empty"},
+                "documentTab": {
+                    "body": {
+                        "content": [{"endIndex": 1}]
+                    }
+                },
+            }
+        ]
+    }
+    docs_service.documents.return_value.batchUpdate.return_value.execute.return_value = {}
+
+    result = client.replace_tab_content("doc-4", "tab-empty", "Hello")
+
+    assert result["success"] is True
+    body = docs_service.documents.return_value.batchUpdate.call_args.kwargs["body"]
+    requests = body["requests"]
+    assert all("deleteContentRange" not in req for req in requests)
+    assert requests[0]["insertText"]["text"] == "Hello"
 
 
 def test_api_error_handling(client_env):

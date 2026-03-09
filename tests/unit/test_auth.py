@@ -7,7 +7,7 @@ import json
 import pytest
 from unittest.mock import MagicMock, PropertyMock, patch
 
-from src.auth import SCOPES, get_credentials
+from gdocs.auth import SCOPES, get_credentials
 
 
 def test_get_credentials_from_existing_token(tmp_path):
@@ -16,8 +16,8 @@ def test_get_credentials_from_existing_token(tmp_path):
     (secrets_dir / "token.json").write_text("{}", encoding="utf-8")
 
     creds = MagicMock(valid=True)
-    with patch("src.auth.Credentials.from_authorized_user_file", return_value=creds) as from_token:
-        with patch("src.auth.InstalledAppFlow.from_client_secrets_file") as flow_factory:
+    with patch("gdocs.auth.Credentials.from_authorized_user_file", return_value=creds) as from_token:
+        with patch("gdocs.auth.InstalledAppFlow.from_client_secrets_file") as flow_factory:
             result = get_credentials(secrets_dir)
 
     assert result is creds
@@ -34,9 +34,9 @@ def test_get_credentials_refresh_expired(tmp_path):
     creds.to_json.return_value = '{"token": "refreshed"}'  # pyright: ignore[reportAny]
     request_obj = object()
 
-    with patch("src.auth.Credentials.from_authorized_user_file", return_value=creds):
-        with patch("src.auth.Request", return_value=request_obj) as request_cls:
-            with patch("src.auth.InstalledAppFlow.from_client_secrets_file") as flow_factory:
+    with patch("gdocs.auth.Credentials.from_authorized_user_file", return_value=creds):
+        with patch("gdocs.auth.Request", return_value=request_obj) as request_cls:
+            with patch("gdocs.auth.InstalledAppFlow.from_client_secrets_file") as flow_factory:
                 result = get_credentials(secrets_dir)
 
     assert result is creds
@@ -55,8 +55,8 @@ def test_get_credentials_fresh_oauth_flow(tmp_path):
     flow = MagicMock()
     flow.run_local_server.return_value = oauth_creds  # pyright: ignore[reportAny]
 
-    with patch("src.auth.Credentials.from_authorized_user_file") as from_token:
-        with patch("src.auth.InstalledAppFlow.from_client_secrets_file", return_value=flow) as flow_factory:
+    with patch("gdocs.auth.Credentials.from_authorized_user_file") as from_token:
+        with patch("gdocs.auth.InstalledAppFlow.from_client_secrets_file", return_value=flow) as flow_factory:
             result = get_credentials(secrets_dir)
 
     assert result is oauth_creds
@@ -83,8 +83,8 @@ def test_get_credentials_saves_token(tmp_path):
     flow = MagicMock()
     flow.run_local_server.return_value = oauth_creds  # pyright: ignore[reportAny]
 
-    with patch("src.auth.Credentials.from_authorized_user_file", return_value=None):
-        with patch("src.auth.InstalledAppFlow.from_client_secrets_file", return_value=flow):
+    with patch("gdocs.auth.Credentials.from_authorized_user_file", return_value=None):
+        with patch("gdocs.auth.InstalledAppFlow.from_client_secrets_file", return_value=flow):
             get_credentials(secrets_dir)
 
     token_file = secrets_dir / "token.json"
