@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 import re
-from typing import Any
+from typing import Any, Literal, TypedDict
 
 
 class BlockType(Enum):
@@ -15,6 +15,7 @@ class BlockType(Enum):
     ORDERED_LIST = "ORDERED_LIST"
     HORIZONTAL_RULE = "HORIZONTAL_RULE"
     BLOCKQUOTE = "BLOCKQUOTE"
+    TABLE = "TABLE"
 
 
 @dataclass
@@ -27,9 +28,37 @@ class TextSegment:
 
 
 @dataclass
+class TableData:
+    headers: list[str]
+    rows: list[list[str]]
+    col_count: int
+
+    @property
+    def row_count(self) -> int:
+        return 1 + len(self.rows)
+
+
+@dataclass
 class Block:
     block_type: BlockType
     segments: list[TextSegment]
+    table_data: TableData | None = None
+
+
+class TextBlocksSegment(TypedDict):
+    type: Literal["text"]
+    blocks: list[Block]
+    separators: list[int]
+
+
+class TableBlockSegment(TypedDict):
+    type: Literal["table"]
+    table_data: TableData
+    separators_before: int
+
+
+SegmentGroup = TextBlocksSegment | TableBlockSegment
+Request = dict[str, object]
 
 
 _ORDERED_LIST_PATTERN = re.compile(r"^(\d+)\.\s+(.*)$")
@@ -48,10 +77,32 @@ def _parse_markdown(text: str) -> tuple[list[Block], list[int]]:
     separators_before_block: list[int] = []
     pending_separators = 0
 
-    for raw_line in text.splitlines():
+    lines = text.splitlines()
+    line_index = 0
+    while line_index < len(lines):
+        raw_line = lines[line_index]
         if raw_line.strip() == "":
             if blocks:
                 pending_separators += 1
+            line_index += 1
+            continue
+
+        if raw_line.startswith("|"):
+            table_lines: list[str] = []
+            while line_index < len(lines) and lines[line_index].startswith("|"):
+                table_lines.append(lines[line_index])
+                line_index += 1
+
+            table_data = _parse_table_block(table_lines)
+            blocks.append(
+                Block(
+                    block_type=BlockType.TABLE,
+                    segments=[],
+                    table_data=table_data,
+                )
+            )
+            separators_before_block.append(pending_separators)
+            pending_separators = 0
             continue
 
         block_type, content = _parse_block_line(raw_line)
@@ -65,6 +116,7 @@ def _parse_markdown(text: str) -> tuple[list[Block], list[int]]:
         blocks.append(Block(block_type=block_type, segments=segments))
         separators_before_block.append(pending_separators)
         pending_separators = 0
+        line_index += 1
 
     return blocks, separators_before_block
 
@@ -88,6 +140,42 @@ def _parse_block_line(line: str) -> tuple[BlockType, str]:
         return BlockType.ORDERED_LIST, ordered_match.group(2)
 
     return BlockType.PARAGRAPH, line
+
+
+def _parse_table_row(line: str) -> list[str]:
+    cells = line.strip().strip("|").split("|")
+    return [cell.strip() for cell in cells]
+
+
+def _is_table_separator_line(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped.startswith("|"):
+        return False
+    if "-" not in stripped:
+        return False
+    return all(character in "|:- " for character in stripped)
+
+
+def _normalize_table_row(cells: list[str], col_count: int) -> list[str]:
+    if len(cells) >= col_count:
+        return cells[:col_count]
+    return cells + [""] * (col_count - len(cells))
+
+
+def _parse_table_block(table_lines: list[str]) -> TableData:
+    headers = _parse_table_row(table_lines[0])
+    col_count = max(1, len(headers))
+    normalized_headers = _normalize_table_row(headers, col_count)
+
+    row_start = 1
+    if len(table_lines) > 1 and _is_table_separator_line(table_lines[1]):
+        row_start = 2
+
+    rows = [
+        _normalize_table_row(_parse_table_row(line), col_count)
+        for line in table_lines[row_start:]
+    ]
+    return TableData(headers=normalized_headers, rows=rows, col_count=col_count)
 
 
 def _parse_inline_segments(content: str) -> list[TextSegment]:
@@ -229,30 +317,16 @@ def _custom_paragraph_style(block_type: BlockType) -> tuple[dict[str, object], s
     return None
 
 
-def markdown_to_requests(
-    text: str,
-    tab_id: str | None = None,
-    start_index: int = 1,
-) -> tuple[list[dict[str, Any]], int]:  # pyright: ignore[reportExplicitAny]
-    """Convert markdown text to Google Docs API batchUpdate requests.
-
-    Args:
-        text: Markdown-formatted string.
-        tab_id: Optional Google Docs tab ID for multi-tab documents.
-        start_index: Character index where text insertion begins (default 1).
-
-    Returns:
-        Tuple of (requests, end_index).
-        - requests: ordered list of batchUpdate request dicts.
-          First request is insertText with full plain text.
-          Remaining requests are formatting (updateTextStyle, updateParagraphStyle, createParagraphBullets).
-        - end_index: the character index after the last inserted character.
-    """
-    blocks, separators_before_block = _parse_markdown(text)
+def _text_blocks_to_requests(
+    blocks: list[Block],
+    separators_before_block: list[int],
+    tab_id: str | None,
+    start_index: int,
+) -> tuple[list[Request], list[Request], int]:
     plain_text = _build_plain_text(blocks, separators_before_block)
     end_index = start_index + len(plain_text)
 
-    requests = [
+    insertion_requests: list[Request] = [
         {
             "insertText": {
                 "location": _build_location(start_index, tab_id),
@@ -260,6 +334,8 @@ def markdown_to_requests(
             }
         }
     ]
+
+    formatting_requests: list[Request] = []
 
     current_index = start_index
     for block, separators in zip(blocks, separators_before_block):
@@ -273,7 +349,7 @@ def markdown_to_requests(
             style_payload = _segment_text_style(segment)
             if style_payload and segment_start < segment_end:
                 text_style, fields = style_payload
-                requests.append(
+                formatting_requests.append(
                     {
                         "updateTextStyle": {
                             "range": _build_range(segment_start, segment_end, tab_id),
@@ -289,7 +365,7 @@ def markdown_to_requests(
 
         named_style = _paragraph_named_style(block.block_type)
         if named_style is not None:
-            requests.append(
+            formatting_requests.append(
                 {
                     "updateParagraphStyle": {
                         "range": _build_range(block_start, block_end, tab_id),
@@ -301,7 +377,7 @@ def markdown_to_requests(
 
         bullet_preset = _bullet_preset(block.block_type)
         if bullet_preset is not None:
-            requests.append(
+            formatting_requests.append(
                 {
                     "createParagraphBullets": {
                         "range": _build_range(block_start, block_end, tab_id),
@@ -313,7 +389,7 @@ def markdown_to_requests(
         custom_style = _custom_paragraph_style(block.block_type)
         if custom_style is not None:
             style_dict, style_fields = custom_style
-            requests.append(
+            formatting_requests.append(
                 {
                     "updateParagraphStyle": {
                         "range": _build_range(block_start, block_end, tab_id),
@@ -324,7 +400,7 @@ def markdown_to_requests(
             )
 
         if block.block_type is BlockType.HORIZONTAL_RULE:
-            requests.append(
+            formatting_requests.append(
                 {
                     "updateTextStyle": {
                         "range": _build_range(block_start, block_end - 1, tab_id),
@@ -341,4 +417,186 @@ def markdown_to_requests(
 
         current_index = block_end
 
-    return requests, end_index
+    return insertion_requests, formatting_requests, end_index
+
+
+def _table_to_requests(
+    table_data: TableData,
+    tab_id: str | None,
+    start_index: int,
+) -> tuple[list[Request], list[Request], int]:
+    row_count = table_data.row_count
+    col_count = table_data.col_count
+    all_rows = [table_data.headers] + table_data.rows
+    empty_table_size = row_count * (2 * col_count + 1) + 3
+
+    insertion_requests: list[Request] = [
+        {
+            "insertTable": {
+                "rows": row_count,
+                "columns": col_count,
+                "location": _build_location(start_index, tab_id),
+            }
+        }
+    ]
+
+    cell_insertions: list[Request] = []
+    for row in range(row_count):
+        for col in range(col_count):
+            cell_text = all_rows[row][col]
+            if not cell_text:
+                continue
+
+            empty_position = start_index + row * (2 * col_count + 1) + 2 * col + 4
+            cell_insertions.append(
+                {
+                    "insertText": {
+                        "location": _build_location(empty_position, tab_id),
+                        "text": cell_text,
+                    }
+                }
+            )
+    cell_insertions.reverse()
+    insertion_requests.extend(cell_insertions)
+
+    formatting_requests: list[Request] = []
+    cumulative_shift = 0
+    for row in range(row_count):
+        for col in range(col_count):
+            cell_text = all_rows[row][col]
+
+            if row == 0 and cell_text:
+                empty_position = start_index + row * (2 * col_count + 1) + 2 * col + 4
+                final_position = empty_position + cumulative_shift
+                formatting_requests.append(
+                    {
+                        "updateTextStyle": {
+                            "range": _build_range(
+                                final_position,
+                                final_position + len(cell_text),
+                                tab_id,
+                            ),
+                            "textStyle": {"bold": True},
+                            "fields": "bold",
+                        }
+                    }
+                )
+
+            cumulative_shift += len(cell_text)
+
+    total_cell_text = sum(len(cell_text) for row in all_rows for cell_text in row)
+    end_index = start_index + empty_table_size + total_cell_text
+    return insertion_requests, formatting_requests, end_index
+
+
+def _split_at_tables(
+    blocks: list[Block],
+    separators_before_block: list[int],
+) -> list[SegmentGroup]:
+    segments: list[SegmentGroup] = []
+    current_text_blocks: list[Block] = []
+    current_text_separators: list[int] = []
+
+    for index, block in enumerate(blocks):
+        if block.block_type is BlockType.TABLE:
+            if current_text_blocks:
+                segments.append({
+                    "type": "text",
+                    "blocks": current_text_blocks,
+                    "separators": current_text_separators,
+                })
+                current_text_blocks = []
+                current_text_separators = []
+
+            if block.table_data is None:
+                raise ValueError("TABLE block requires table_data")
+
+            segments.append({
+                "type": "table",
+                "table_data": block.table_data,
+                "separators_before": separators_before_block[index],
+            })
+            continue
+
+        current_text_blocks.append(block)
+        current_text_separators.append(separators_before_block[index])
+
+    if current_text_blocks:
+        segments.append({
+            "type": "text",
+            "blocks": current_text_blocks,
+            "separators": current_text_separators,
+        })
+
+    return segments
+
+
+def markdown_to_requests(
+    text: str,
+    tab_id: str | None = None,
+    start_index: int = 1,
+) -> tuple[list[dict[str, Any]], int]:  # pyright: ignore[reportExplicitAny]
+    """Convert markdown text to Google Docs API batchUpdate requests.
+
+    Args:
+        text: Markdown-formatted string.
+        tab_id: Optional Google Docs tab ID for multi-tab documents.
+        start_index: Character index where text insertion begins (default 1).
+
+    Returns:
+        Tuple of (requests, end_index).
+        - requests: ordered list of batchUpdate request dicts.
+          For text-only markdown, first request is insertText with full plain text.
+          For markdown containing tables, requests include insertTable and per-cell insertText.
+          Remaining requests are formatting (updateTextStyle, updateParagraphStyle, createParagraphBullets).
+        - end_index: the character index after the last inserted character.
+    """
+    blocks, separators_before_block = _parse_markdown(text)
+
+    if not any(block.block_type is BlockType.TABLE for block in blocks):
+        insertion_requests, formatting_requests, end_index = _text_blocks_to_requests(
+            blocks,
+            separators_before_block,
+            tab_id,
+            start_index,
+        )
+        return insertion_requests + formatting_requests, end_index
+
+    all_insertion_requests: list[Request] = []
+    all_formatting_requests: list[Request] = []
+    current_index = start_index
+
+    segments = _split_at_tables(blocks, separators_before_block)
+    for segment in segments:
+        if segment["type"] == "text":
+            insertion_requests, formatting_requests, current_index = _text_blocks_to_requests(
+                segment["blocks"],
+                segment["separators"],
+                tab_id,
+                current_index,
+            )
+            all_insertion_requests.extend(insertion_requests)
+            all_formatting_requests.extend(formatting_requests)
+            continue
+
+        separators_before = segment["separators_before"]
+        if separators_before:
+            all_insertion_requests.append(
+                {
+                    "insertText": {
+                        "location": _build_location(current_index, tab_id),
+                        "text": "\n" * separators_before,
+                    }
+                }
+            )
+            current_index += separators_before
+
+        insertion_requests, formatting_requests, current_index = _table_to_requests(
+            segment["table_data"],
+            tab_id,
+            current_index,
+        )
+        all_insertion_requests.extend(insertion_requests)
+        all_formatting_requests.extend(formatting_requests)
+
+    return all_insertion_requests + all_formatting_requests, current_index

@@ -8,6 +8,18 @@
 - 新增 `tab add DOC_ID "标题" [文件] [--format]` CLI 命令：给现有文档添加新 tab，可选填充内容（支持 Markdown）
 - 新增 `list_tabs()` 和 `add_tab()` 方法到 GoogleDocsClient
 - 新增 8 个单元测试覆盖新功能（client + CLI）
+- **新增 Markdown 表格支持**（`feat/table-support` 分支）：
+  - Markdown 中的 `| col1 | col2 |` 表格语法现在渲染为 Google Docs 原生表格
+  - 表头行自动加粗
+  - 空单元格正确跳过（不插入空文本）
+  - 单元格文本按反序插入，避免索引偏移
+  - 支持表格与普通文本混排（文本→表格→文本→表格...）
+  - `markdown.py` 重构为分段架构：`_split_at_tables()` 将内容分为 text/table 段，各段独立生成请求
+  - 不支持合并单元格、列宽控制、对齐方式（设计决策：只支持简单表格）
+  - `markdown_to_requests()` 返回类型不变（`tuple[list[dict], int]`），无需修改调用方
+  - 新增 10 个表格专用单元测试，总测试数 84 个，全部通过
+  - 已在"测试"文档中验证：新建 "Table 测试" tab 含 3x3 表格 + 前后文本，渲染正确
+  - 已重新渲染 "AI 周报 2026-03-07" tab，表格从纯文本升级为原生 Google Docs 表格
 
 ### 2026-03-08
 
@@ -74,3 +86,6 @@
 - 引用块通过 `updateParagraphStyle` 设置左缩进 + 左边框实现，`borderLeft` 需要包含 `color`、`width`、`dashStyle`、`padding` 四个子字段
 - CLI 比现场写 Python 更适合 AI agent 调用：减少 import/venv/path 出错机会，一行命令完成操作，JSON 输出便于程序化处理
 - 包从 `src/` 重命名为 `gdocs/` 后，`python -m gdocs` 自动寻找 `gdocs/__main__.py`，无需额外安装步骤
+- Google Docs `insertTable` API 的索引行为：在 index N 调用 insertTable 后，表格元素实际从 N+1 开始（不是 N）。这意味着 cell(r,c) 的空位置公式是 `insertion_index + r*(2*C+1) + 2*c + 4`（不是 +3），空表格占用大小是 `R*(2*C+1) + 3`（不是 +2）。这个 +1 偏移在 Google 官方文档中没有明确说明，只能通过实际 API 调用后读取文档结构来验证
+- 表格单元格文本必须按反序插入（最后一个 cell 先插入），否则前面的插入会改变后面 cell 的索引位置。这与普通文本的顺序插入逻辑不同
+- 混合内容（文本+表格+文本）的渲染需要先将 markdown 按表格边界分段，每段独立计算索引。段间共享 end_index 作为下一段的 start_index，确保索引连续

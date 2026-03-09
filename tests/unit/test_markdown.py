@@ -1,5 +1,5 @@
 # pyright: reportUnknownParameterType=false, reportMissingParameterType=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnusedCallResult=false
-# pyright: reportPrivateUsage=false, reportAny=false
+# pyright: reportPrivateUsage=false
 
 from __future__ import annotations
 
@@ -298,3 +298,178 @@ def test_full_markdown_document():
     ]
     assert "BULLET_DISC_CIRCLE_SQUARE" in bullet_presets
     assert "NUMBERED_DECIMAL_ALPHA_ROMAN" in bullet_presets
+
+
+def test_table_block_parse():
+    blocks, separators = _parse_markdown("| H1 | H2 |\n|---|---|\n| A | B |")
+
+    assert separators == [0]
+    assert len(blocks) == 1
+    assert blocks[0].block_type is BlockType.TABLE
+    assert blocks[0].table_data is not None
+    assert blocks[0].table_data.headers == ["H1", "H2"]
+    assert blocks[0].table_data.rows == [["A", "B"]]
+    assert blocks[0].table_data.col_count == 2
+    assert blocks[0].table_data.row_count == 2
+
+
+def test_table_separator_line_skipped():
+    blocks, _ = _parse_markdown("| H1 | H2 |\n|---|---|\n| A | B |\n| C | D |")
+
+    assert len(blocks) == 1
+    assert blocks[0].block_type is BlockType.TABLE
+    assert blocks[0].table_data is not None
+    assert blocks[0].table_data.rows == [["A", "B"], ["C", "D"]]
+
+
+def test_table_requests_contain_insert_table():
+    requests, end_index = markdown_to_requests(
+        "| H1 | H2 |\n|---|---|\n| A | B |",
+        tab_id="t1",
+        start_index=1,
+    )
+
+    assert "insertTable" in requests[0]
+    assert requests[0]["insertTable"] == {
+        "rows": 2,
+        "columns": 2,
+        "location": {"index": 1, "tabId": "t1"},
+    }
+    assert end_index == 20
+
+
+def test_table_cell_insertions_reversed():
+    requests, _ = markdown_to_requests("| H1 | H2 |\n|---|---|\n| A | B |", start_index=1)
+
+    insert_text_requests = [request["insertText"] for request in requests if "insertText" in request]
+    assert [request["location"]["index"] for request in insert_text_requests] == [12, 10, 7, 5]  # pyright: ignore[reportAny]
+    assert [request["text"] for request in insert_text_requests] == ["B", "A", "H2", "H1"]  # pyright: ignore[reportAny]
+
+
+def test_table_header_bold():
+    requests, _ = markdown_to_requests("| H1 | H2 |\n|---|---|\n| A | B |", start_index=1)
+
+    style_requests = [request["updateTextStyle"] for request in requests if "updateTextStyle" in request]
+    assert len(style_requests) == 2
+    assert style_requests[0] == {
+        "range": {"startIndex": 5, "endIndex": 7},
+        "textStyle": {"bold": True},
+        "fields": "bold",
+    }
+    assert style_requests[1] == {
+        "range": {"startIndex": 9, "endIndex": 11},
+        "textStyle": {"bold": True},
+        "fields": "bold",
+    }
+
+
+def test_table_index_math_2x2():
+    requests, end_index = markdown_to_requests("| H1 | H2 |\n|---|---|\n| A | B |", start_index=1)
+
+    locations_by_text = {
+        request["insertText"]["text"]: request["insertText"]["location"]["index"]
+        for request in requests
+        if "insertText" in request
+    }
+    assert locations_by_text == {"H1": 5, "H2": 7, "A": 10, "B": 12}
+    assert end_index == 20
+
+
+def test_table_index_math_3x3():
+    requests, end_index = markdown_to_requests(
+        "| a | b | c |\n|---|---|---|\n| d | e | f |\n| g | h | i |",
+        start_index=1,
+    )
+
+    locations_by_text = {
+        request["insertText"]["text"]: request["insertText"]["location"]["index"]
+        for request in requests
+        if "insertText" in request
+    }
+    assert locations_by_text == {
+        "a": 5,
+        "b": 7,
+        "c": 9,
+        "d": 12,
+        "e": 14,
+        "f": 16,
+        "g": 19,
+        "h": 21,
+        "i": 23,
+    }
+    assert end_index == 34
+
+
+def test_table_mixed_with_text():
+    text = "# Title\n\n| H1 | H2 |\n|---|---|\n| A | B |\n\nParagraph"
+    requests, end_index = markdown_to_requests(text, start_index=1)
+
+    assert [next(iter(request)) for request in requests[:8]] == [
+        "insertText",
+        "insertText",
+        "insertTable",
+        "insertText",
+        "insertText",
+        "insertText",
+        "insertText",
+        "insertText",
+    ]
+    assert requests[0]["insertText"] == {"location": {"index": 1}, "text": "Title\n"}
+    assert requests[1]["insertText"] == {"location": {"index": 7}, "text": "\n"}
+    assert requests[2]["insertTable"] == {
+        "rows": 2,
+        "columns": 2,
+        "location": {"index": 8},
+    }
+    assert requests[3]["insertText"] == {"location": {"index": 19}, "text": "B"}
+    assert requests[4]["insertText"] == {"location": {"index": 17}, "text": "A"}
+    assert requests[5]["insertText"] == {"location": {"index": 14}, "text": "H2"}
+    assert requests[6]["insertText"] == {"location": {"index": 12}, "text": "H1"}
+    assert requests[7]["insertText"] == {"location": {"index": 27}, "text": "\nParagraph\n"}
+
+    paragraph_styles = [
+        request["updateParagraphStyle"]
+        for request in requests
+        if "updateParagraphStyle" in request
+    ]
+    assert paragraph_styles == [
+        {
+            "range": {"startIndex": 1, "endIndex": 7},
+            "paragraphStyle": {"namedStyleType": "HEADING_1"},
+            "fields": "namedStyleType",
+        },
+        {
+            "range": {"startIndex": 28, "endIndex": 38},
+            "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+            "fields": "namedStyleType",
+        },
+    ]
+    assert end_index == 38
+
+
+def test_table_empty_cells():
+    requests, end_index = markdown_to_requests(
+        "| H1 | H2 |\n|---|---|\n| A | |\n| | D |",
+        start_index=1,
+    )
+
+    insert_text_requests = [request["insertText"] for request in requests if "insertText" in request]
+    assert [request["text"] for request in insert_text_requests] == ["D", "A", "H2", "H1"]  # pyright: ignore[reportAny]
+    assert all(request["text"] != "" for request in insert_text_requests)  # pyright: ignore[reportAny]
+    assert end_index == 25
+
+
+def test_table_with_tab_id():
+    requests, _ = markdown_to_requests(
+        "| H1 | H2 |\n|---|---|\n| A | B |",
+        tab_id="tab-xyz",
+        start_index=3,
+    )
+
+    for request in requests:
+        if "insertTable" in request:
+            assert request["insertTable"]["location"]["tabId"] == "tab-xyz"
+        if "insertText" in request:
+            assert request["insertText"]["location"]["tabId"] == "tab-xyz"
+        if "updateTextStyle" in request:
+            assert request["updateTextStyle"]["range"]["tabId"] == "tab-xyz"
