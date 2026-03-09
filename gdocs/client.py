@@ -201,6 +201,63 @@ class GoogleDocsClient:
         except HttpError as exc:
             raise RuntimeError(f"Failed to replace content in tab '{tab_id}'") from exc
 
+    def list_tabs(self, doc_id: str) -> list[dict[str, str]]:
+        """List all tabs in a document with their IDs and titles."""
+        try:
+            doc = self.docs.documents().get(
+                documentId=doc_id,
+                includeTabsContent=True,
+                fields="tabs(tabProperties(tabId,title))",
+            ).execute()
+            return [
+                {
+                    "tab_id": tab.get("tabProperties", {}).get("tabId", ""),
+                    "title": tab.get("tabProperties", {}).get("title", ""),
+                }
+                for tab in doc.get("tabs", [])
+            ]
+        except HttpError as exc:
+            raise RuntimeError(f"Failed to list tabs for document '{doc_id}'") from exc
+
+    def add_tab(
+        self,
+        doc_id: str,
+        title: str,
+        content: str | None = None,
+        content_format: str = "plain",
+    ) -> dict[str, str]:
+        """Add a new tab to a document, optionally with content."""
+        try:
+            self.docs.documents().batchUpdate(
+                documentId=doc_id,
+                body={"requests": [{"addDocumentTab": {"tabProperties": {"title": title}}}]},
+            ).execute()
+
+            doc = self.docs.documents().get(
+                documentId=doc_id,
+                includeTabsContent=True,
+                fields="tabs(tabProperties(tabId,title))",
+            ).execute()
+            all_tabs = doc.get("tabs", [])
+            new_tab = all_tabs[-1]
+            tab_id = new_tab.get("tabProperties", {}).get("tabId", "")
+
+            if content:
+                if content_format == "markdown":
+                    write_requests, _ = markdown_to_requests(content, tab_id=tab_id, start_index=1)
+                else:
+                    write_requests = [
+                        {"insertText": {"location": {"index": 1, "tabId": tab_id}, "text": content}}
+                    ]
+                self.docs.documents().batchUpdate(
+                    documentId=doc_id,
+                    body={"requests": write_requests},
+                ).execute()
+
+            return {"doc_id": doc_id, "tab_id": tab_id, "title": title}
+        except HttpError as exc:
+            raise RuntimeError(f"Failed to add tab '{title}' to document '{doc_id}'") from exc
+
     def update_title(self, doc_id: str, new_title: str) -> dict[str, object]:
         """Update document title via Drive metadata."""
         try:

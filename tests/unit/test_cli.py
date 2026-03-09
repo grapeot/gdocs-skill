@@ -185,6 +185,52 @@ def test_tab_replace_plain_format(capsys, tmp_path):
     assert out["tab_id"] == "tab-10"
 
 
+def test_tab_list_command(capsys):
+    with patch("gdocs.__main__.GoogleDocsClient") as client_cls:
+        client = client_cls.return_value
+        client.list_tabs.return_value = [{"tab_id": "tab-1", "title": "Overview"}]
+
+        code = main(["tab", "list", "doc-11"])
+
+    assert code == 0
+    client.list_tabs.assert_called_once_with("doc-11")
+    out = json.loads(capsys.readouterr().out)
+    assert out == [{"tab_id": "tab-1", "title": "Overview"}]
+
+
+def test_tab_add_command_no_file(capsys):
+    with patch("gdocs.__main__.GoogleDocsClient") as client_cls:
+        client = client_cls.return_value
+        client.add_tab.return_value = {"doc_id": "doc-12", "tab_id": "tab-12", "title": "New Tab"}
+
+        code = main(["tab", "add", "doc-12", "New Tab"])
+
+    assert code == 0
+    client.add_tab.assert_called_once_with(
+        "doc-12", "New Tab", content=None, content_format="markdown"
+    )
+    out = json.loads(capsys.readouterr().out)
+    assert out["tab_id"] == "tab-12"
+
+
+def test_tab_add_command_with_file(capsys, tmp_path):
+    file_path = tmp_path / "tab.md"
+    file_path.write_text("# From file", encoding="utf-8")
+
+    with patch("gdocs.__main__.GoogleDocsClient") as client_cls:
+        client = client_cls.return_value
+        client.add_tab.return_value = {"doc_id": "doc-13", "tab_id": "tab-13", "title": "From File"}
+
+        code = main(["tab", "add", "doc-13", "From File", str(file_path), "--format", "plain"])
+
+    assert code == 0
+    client.add_tab.assert_called_once_with(
+        "doc-13", "From File", content="# From file", content_format="plain"
+    )
+    out = json.loads(capsys.readouterr().out)
+    assert out["doc_id"] == "doc-13"
+
+
 def test_error_outputs_json_to_stderr(capsys):
     with patch("gdocs.__main__.GoogleDocsClient") as client_cls:
         client = client_cls.return_value

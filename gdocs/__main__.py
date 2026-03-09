@@ -61,6 +61,15 @@ def build_parser() -> argparse.ArgumentParser:
     _ = tab_replace_parser.add_argument("file", type=Path)
     _ = tab_replace_parser.add_argument("--format", choices=["plain", "markdown"], default="markdown")
 
+    tab_list_parser = tab_subparsers.add_parser("list")
+    _ = tab_list_parser.add_argument("doc_id")
+
+    tab_add_parser = tab_subparsers.add_parser("add")
+    _ = tab_add_parser.add_argument("doc_id")
+    _ = tab_add_parser.add_argument("title")
+    _ = tab_add_parser.add_argument("file", type=Path, nargs="?", default=None)
+    _ = tab_add_parser.add_argument("--format", choices=["plain", "markdown"], default="markdown")
+
     return parser
 
 
@@ -118,6 +127,21 @@ def run_command(args: argparse.Namespace) -> object:
             str(data["doc_id"]),
             str(data["tab_id"]),
             content,
+            content_format=str(data["format"]),
+        )
+
+    if command == "tab" and str(data["tab_command"]) == "list":
+        return client.list_tabs(str(data["doc_id"]))
+
+    if command == "tab" and str(data["tab_command"]) == "add":
+        content = None
+        file_path = data.get("file")
+        if file_path is not None:
+            content = Path(file_path).read_text(encoding="utf-8")
+        return client.add_tab(
+            str(data["doc_id"]),
+            str(data["title"]),
+            content=content,
             content_format=str(data["format"]),
         )
 

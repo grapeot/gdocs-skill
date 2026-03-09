@@ -445,6 +445,94 @@ def test_replace_tab_content_empty_tab(client_env):
     assert requests[0]["insertText"]["text"] == "Hello"
 
 
+def test_list_tabs(client_env):
+    client, docs_service, _ = client_env
+    docs_service.documents.return_value.get.return_value.execute.return_value = {
+        "tabs": [
+            {"tabProperties": {"tabId": "tab-1", "title": "Overview"}},
+            {"tabProperties": {"tabId": "tab-2", "title": "Notes"}},
+        ]
+    }
+
+    result = client.list_tabs("doc-1")
+
+    assert result == [
+        {"tab_id": "tab-1", "title": "Overview"},
+        {"tab_id": "tab-2", "title": "Notes"},
+    ]
+    docs_service.documents.return_value.get.assert_called_once_with(
+        documentId="doc-1", includeTabsContent=True, fields="tabs(tabProperties(tabId,title))"
+    )
+
+
+def test_list_tabs_empty(client_env):
+    client, docs_service, _ = client_env
+    docs_service.documents.return_value.get.return_value.execute.return_value = {}
+
+    result = client.list_tabs("doc-empty")
+
+    assert result == []
+    docs_service.documents.return_value.get.assert_called_once_with(
+        documentId="doc-empty", includeTabsContent=True, fields="tabs(tabProperties(tabId,title))"
+    )
+
+
+def test_add_tab_without_content(client_env):
+    client, docs_service, _ = client_env
+    docs_service.documents.return_value.batchUpdate.return_value.execute.return_value = {}
+    docs_service.documents.return_value.get.return_value.execute.return_value = {
+        "tabs": [{"tabProperties": {"tabId": "tab-new", "title": "New Tab"}}]
+    }
+
+    result = client.add_tab("doc-2", "New Tab")
+
+    assert result == {"doc_id": "doc-2", "tab_id": "tab-new", "title": "New Tab"}
+    assert docs_service.documents.return_value.batchUpdate.call_count == 1
+    add_call = docs_service.documents.return_value.batchUpdate.call_args
+    assert add_call.kwargs["documentId"] == "doc-2"
+    requests = add_call.kwargs["body"]["requests"]
+    assert requests == [{"addDocumentTab": {"tabProperties": {"title": "New Tab"}}}]
+    docs_service.documents.return_value.get.assert_called_once_with(
+        documentId="doc-2", includeTabsContent=True, fields="tabs(tabProperties(tabId,title))"
+    )
+
+
+def test_add_tab_with_plain_content(client_env):
+    client, docs_service, _ = client_env
+    docs_service.documents.return_value.batchUpdate.return_value.execute.return_value = {}
+    docs_service.documents.return_value.get.return_value.execute.return_value = {
+        "tabs": [{"tabProperties": {"tabId": "tab-plain", "title": "Plain Tab"}}]
+    }
+
+    result = client.add_tab("doc-3", "Plain Tab", content="Hello tab", content_format="plain")
+
+    assert result == {"doc_id": "doc-3", "tab_id": "tab-plain", "title": "Plain Tab"}
+    assert docs_service.documents.return_value.batchUpdate.call_count == 2
+    content_call = docs_service.documents.return_value.batchUpdate.call_args_list[1]
+    content_requests = content_call.kwargs["body"]["requests"]
+    assert content_requests == [
+        {"insertText": {"location": {"index": 1, "tabId": "tab-plain"}, "text": "Hello tab"}}
+    ]
+
+
+def test_add_tab_with_markdown_content(client_env):
+    client, docs_service, _ = client_env
+    docs_service.documents.return_value.batchUpdate.return_value.execute.return_value = {}
+    docs_service.documents.return_value.get.return_value.execute.return_value = {
+        "tabs": [{"tabProperties": {"tabId": "tab-md", "title": "MD Tab"}}]
+    }
+    markdown_requests = [{"insertText": {"location": {"index": 1, "tabId": "tab-md"}, "text": "Hi\n"}}]
+
+    with patch("gdocs.client.markdown_to_requests", return_value=(markdown_requests, 4)) as md_to_requests:
+        result = client.add_tab("doc-4", "MD Tab", content="# Hi", content_format="markdown")
+
+    assert result == {"doc_id": "doc-4", "tab_id": "tab-md", "title": "MD Tab"}
+    md_to_requests.assert_called_once_with("# Hi", tab_id="tab-md", start_index=1)
+    assert docs_service.documents.return_value.batchUpdate.call_count == 2
+    content_call = docs_service.documents.return_value.batchUpdate.call_args_list[1]
+    assert content_call.kwargs["body"]["requests"] == markdown_requests
+
+
 def test_api_error_handling(client_env):
     client, docs_service, _ = client_env
     docs_service.documents.return_value.create.return_value.execute.side_effect = _make_http_error()
