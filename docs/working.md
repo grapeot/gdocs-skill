@@ -2,6 +2,13 @@
 
 ## Changelog
 
+### 2026-03-09
+
+- 新增 `tab list DOC_ID` CLI 命令：列出文档所有 tab 的 ID 和标题
+- 新增 `tab add DOC_ID "标题" [文件] [--format]` CLI 命令：给现有文档添加新 tab，可选填充内容（支持 Markdown）
+- 新增 `list_tabs()` 和 `add_tab()` 方法到 GoogleDocsClient
+- 新增 8 个单元测试覆盖新功能（client + CLI）
+
 ### 2026-03-08
 
 - 完成 Google Docs Skill 技术调研：评估了纯 MCP、Skill+MCP 混合、直接 SDK 三种路线
