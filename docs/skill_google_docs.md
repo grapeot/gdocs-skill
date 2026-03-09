@@ -43,7 +43,22 @@ python -m gdocs publish path/to/report.md --title "AI 前线 2026-03-08"
 python -m gdocs publish path/to/report.md --title "报告" --share someone@example.com --role writer
 ```
 
-### 场景 2：更新已有文档的某个 Tab 内容
+### 场景 2：Tab 管理
+
+列出文档所有 Tab：
+
+```bash
+python -m gdocs tab list DOC_ID
+```
+
+给文档添加新 Tab：
+
+```bash
+python -m gdocs tab add DOC_ID "Tab标题"
+python -m gdocs tab add DOC_ID "Tab标题" path/to/content.md --format markdown
+```
+
+更新已有 Tab 的内容（清空后重写）：
 
 ```bash
 python -m gdocs tab replace DOC_ID TAB_ID path/to/updated.md
@@ -105,6 +120,7 @@ python -m gdocs link DOC_ID --public
 | `1. 项目` | 有序列表 |
 | `---` | 分割线（灰色居中线） |
 | `> 引用文本` | 引用块（左缩进 + 左边框） |
+| `\| col \| col \|` | 原生表格（表头自动加粗） |
 
 ## 注意事项
 
