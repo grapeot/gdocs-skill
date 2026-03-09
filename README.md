@@ -88,7 +88,7 @@ gdocs_skill/
    - `https://www.googleapis.com/auth/documents`（Google Docs API - 查看和管理文档）
    - `https://www.googleapis.com/auth/drive.file`（Google Drive API - 查看和管理文件）
 7. 点击 "UPDATE"，然后 "SAVE AND CONTINUE"
-8. 在 Test users 页面，点击 "ADD USERS"，添加用户自己的 Gmail 地址
+8. **（关键步骤）** 在 Test users 页面，点击 "ADD USERS"，添加用户自己的 Gmail 地址。**如果跳过此步，授权时会遇到 `Error 403: access_denied`（"has not completed the Google verification process"），而不是授权确认页面。** 应用处于测试模式（External + 未发布）时，只有被添加到 Test users 列表中的账号才能授权。
 9. 点击 "SAVE AND CONTINUE"，最后点击 "BACK TO DASHBOARD"
 
 ### Step 4: 创建 OAuth 2.0 凭证
@@ -129,8 +129,11 @@ ls -la secrets/credentials.json
 
 ### 常见问题
 
+**Q: 授权时提示 "Access blocked" / `Error 403: access_denied`**
+A: 说明当前登录的 Google 账号不在 OAuth consent screen 的 Test users 列表中。前往 [OAuth consent screen](https://console.cloud.google.com/apis/credentials/consent) → Test users → ADD USERS，把自己的 Gmail 地址加进去，然后重新运行授权流程。
+
 **Q: 授权时提示 "This app isn't verified"**
-A: 这是正常的。因为应用处于测试模式，点击 "Continue"（继续）即可。只有发布到生产环境才需要 Google 审核。
+A: 这是正常的。因为应用处于测试模式，点击 "Continue"（继续）即可。只有发布到生产环境才需要 Google 审核。注意：只有先被加入 Test users 列表，才会看到这个页面；如果没加，直接看到的是 403 错误（见上一条）。
 
 **Q: token.json 过期了怎么办？**
 A: SDK 会自动刷新 token。如果刷新失败（比如 refresh token 也过期了），删除 `secrets/token.json` 重新运行即可，会再次弹出浏览器授权。

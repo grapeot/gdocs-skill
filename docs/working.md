@@ -34,3 +34,4 @@
 - 并行开发 src 和 test 时，接口细节（参数名、额外参数）容易出现不一致。应先固定接口签名再分发任务，或由一个 agent 先写完 src 再写 test
 - auth.py 中的 isinstance(mock, Credentials) 在单元测试中永远返回 False（MagicMock 不是 Credentials 的实例）。对于类型安全来说，用 typing.cast 替代运行时 isinstance 检查更适合可测试性
 - Google Drive 搜索索引有延迟，集成测试中搜索新创建/重命名的文档需要加重试逻辑（每次 2s，最多 6 次）
+- OAuth consent screen 配置为 External + 未发布状态时，**必须**将用户 Gmail 加入 Test users 列表，否则授权会直接返回 `Error 403: access_denied`（而非显示 "This app isn't verified" 的 Continue 页面）。这一步容易被忽略
