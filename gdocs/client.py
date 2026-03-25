@@ -7,6 +7,7 @@ from typing import Any
 
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from googleapiclient.http import MediaFileUpload
 
 from .auth import get_credentials
 from .markdown import markdown_to_requests
@@ -33,9 +34,49 @@ class GoogleDocsClient:
             doc_id = created["documentId"]
 
             tab_specs = tabs or []
-            if tab_specs:
+            if not tab_specs:
+                return {"id": doc_id, "link": f"https://docs.google.com/document/d/{doc_id}/edit"}
+
+            doc_initial = self.docs.documents().get(
+                documentId=doc_id,
+                includeTabsContent=True,
+                fields="tabs(tabProperties(tabId,title))",
+            ).execute()
+            default_tab_id = doc_initial["tabs"][0]["tabProperties"]["tabId"]
+
+            first_spec = tab_specs[0]
+            first_title = first_spec.get("title")
+            if not first_title or not isinstance(first_title, str):
+                raise ValueError("Each tab must include a non-empty 'title'")
+
+            rename_requests: list[dict[str, Any]] = [
+                {"updateDocumentTabProperties": {
+                    "tabProperties": {"tabId": default_tab_id, "title": first_title},
+                    "fields": "title",
+                }}
+            ]
+            first_content = first_spec.get("content")
+            if isinstance(first_content, str) and first_content:
+                if content_format == "markdown":
+                    md_reqs, _ = markdown_to_requests(
+                        first_content, tab_id=default_tab_id, start_index=1
+                    )
+                    rename_requests.extend(md_reqs)
+                else:
+                    rename_requests.append(
+                        {"insertText": {
+                            "location": {"index": 1, "tabId": default_tab_id},
+                            "text": first_content,
+                        }}
+                    )
+            self.docs.documents().batchUpdate(
+                documentId=doc_id, body={"requests": rename_requests},
+            ).execute()
+
+            remaining_specs = tab_specs[1:]
+            if remaining_specs:
                 add_requests: list[dict[str, Any]] = []
-                for tab in tab_specs:
+                for tab in remaining_specs:
                     tab_title = tab.get("title")
                     if not tab_title or not isinstance(tab_title, str):
                         raise ValueError("Each tab must include a non-empty 'title'")
@@ -46,8 +87,7 @@ class GoogleDocsClient:
                     add_requests.append({"addDocumentTab": {"tabProperties": props}})
 
                 self.docs.documents().batchUpdate(
-                    documentId=doc_id,
-                    body={"requests": add_requests},
+                    documentId=doc_id, body={"requests": add_requests},
                 ).execute()
 
                 doc_with_tabs = self.docs.documents().get(
@@ -56,10 +96,10 @@ class GoogleDocsClient:
                     fields="tabs(tabProperties(tabId,title))",
                 ).execute()
                 all_tabs = doc_with_tabs.get("tabs", [])
-                added_tabs = all_tabs[-len(tab_specs) :] if len(all_tabs) >= len(tab_specs) else []
+                added_tabs = all_tabs[-len(remaining_specs):]
 
                 write_requests: list[dict[str, Any]] = []
-                for index, spec in enumerate(tab_specs):
+                for index, spec in enumerate(remaining_specs):
                     content = spec.get("content")
                     if not isinstance(content, str) or not content:
                         continue
@@ -69,22 +109,21 @@ class GoogleDocsClient:
                     if not isinstance(tab_id, str) or not tab_id:
                         continue
                     if content_format == "markdown":
-                        md_requests, _ = markdown_to_requests(content, tab_id=tab_id, start_index=1)
+                        md_requests, _ = markdown_to_requests(
+                            content, tab_id=tab_id, start_index=1
+                        )
                         write_requests.extend(md_requests)
                     else:
                         write_requests.append(
-                            {
-                                "insertText": {
-                                    "location": {"index": 1, "tabId": tab_id},
-                                    "text": content,
-                                }
-                            }
+                            {"insertText": {
+                                "location": {"index": 1, "tabId": tab_id},
+                                "text": content,
+                            }}
                         )
 
                 if write_requests:
                     self.docs.documents().batchUpdate(
-                        documentId=doc_id,
-                        body={"requests": write_requests},
+                        documentId=doc_id, body={"requests": write_requests},
                     ).execute()
 
             return {"id": doc_id, "link": f"https://docs.google.com/document/d/{doc_id}/edit"}
@@ -294,6 +333,85 @@ class GoogleDocsClient:
             return {"success": True, "link": link_data.get("webViewLink", "")}
         except HttpError as exc:
             raise RuntimeError(f"Failed to share document '{doc_id}'") from exc
+
+    def insert_image(
+        self,
+        doc_id: str,
+        image_path: str,
+        index: int | None = None,
+        tab_id: str | None = None,
+        width_pts: float = 468,
+    ) -> dict[str, object]:
+        """Insert a local image into a Google Doc.
+
+        Uploads the image to Drive, makes it publicly readable, then uses the
+        public URL with InsertInlineImage. If index is None, appends to end.
+        width_pts defaults to 468 (full width of a standard Google Doc body).
+        """
+        img = Path(image_path)
+        if not img.exists():
+            raise FileNotFoundError(f"Image not found: {image_path}")
+
+        mime_map = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif"}
+        mime = mime_map.get(img.suffix.lower(), "image/png")
+
+        try:
+            # Upload to Drive
+            media = MediaFileUpload(str(img), mimetype=mime, resumable=True)
+            uploaded = self.drive.files().create(
+                body={"name": img.name, "mimeType": mime},
+                media_body=media,
+                fields="id,webContentLink",
+            ).execute()
+            file_id = uploaded["id"]
+
+            # Make publicly readable
+            self.drive.permissions().create(
+                fileId=file_id,
+                body={"type": "anyone", "role": "reader"},
+            ).execute()
+
+            # Get direct content link
+            image_url = f"https://drive.google.com/uc?id={file_id}"
+
+            # Find end of document if index not specified
+            if index is None:
+                doc = self.docs.documents().get(
+                    documentId=doc_id, includeTabsContent=True,
+                ).execute()
+                # Find end index of the relevant tab
+                end_index = 1
+                for tab in doc.get("tabs", []):
+                    tid = tab.get("tabProperties", {}).get("tabId")
+                    if tab_id and tid != tab_id:
+                        continue
+                    content_elements = tab.get("documentTab", {}).get("body", {}).get("content", [])
+                    if content_elements:
+                        end_index = content_elements[-1].get("endIndex", 1) - 1
+                    break
+                index = max(end_index, 1)
+
+            location: dict[str, object] = {"index": index}
+            if tab_id:
+                location["tabId"] = tab_id
+
+            requests = [
+                {"insertInlineImage": {
+                    "uri": image_url,
+                    "location": location,
+                    "objectSize": {
+                        "width": {"magnitude": width_pts, "unit": "PT"},
+                    },
+                }}
+            ]
+
+            self.docs.documents().batchUpdate(
+                documentId=doc_id, body={"requests": requests},
+            ).execute()
+
+            return {"success": True, "doc_id": doc_id, "drive_file_id": file_id, "index": index}
+        except HttpError as exc:
+            raise RuntimeError(f"Failed to insert image into document '{doc_id}'") from exc
 
     def get_share_link(self, doc_id: str, public: bool = False) -> str:
         """Return a document share link, optionally enabling public link access."""

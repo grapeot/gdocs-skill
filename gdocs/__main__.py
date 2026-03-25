@@ -70,6 +70,13 @@ def build_parser() -> argparse.ArgumentParser:
     _ = tab_add_parser.add_argument("file", type=Path, nargs="?", default=None)
     _ = tab_add_parser.add_argument("--format", choices=["plain", "markdown"], default="markdown")
 
+    image_parser = subparsers.add_parser("image")
+    _ = image_parser.add_argument("doc_id")
+    _ = image_parser.add_argument("image_path", type=Path)
+    _ = image_parser.add_argument("--index", type=int, default=None)
+    _ = image_parser.add_argument("--tab-id")
+    _ = image_parser.add_argument("--width", type=float, default=468, help="Width in points (468 = full width)")
+
     return parser
 
 
@@ -143,6 +150,15 @@ def run_command(args: argparse.Namespace) -> object:
             str(data["title"]),
             content=content,
             content_format=str(data["format"]),
+        )
+
+    if command == "image":
+        return client.insert_image(
+            str(data["doc_id"]),
+            str(data["image_path"]),
+            index=data.get("index"),
+            tab_id=data.get("tab_id"),
+            width_pts=float(data.get("width", 468)),
         )
 
     raise RuntimeError("Unknown command")
