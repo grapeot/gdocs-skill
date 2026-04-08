@@ -30,6 +30,14 @@ def build_parser() -> argparse.ArgumentParser:
     create_parser = subparsers.add_parser("create")
     _ = create_parser.add_argument("--title", required=True)
 
+    delete_parser = subparsers.add_parser("delete")
+    _ = delete_parser.add_argument("doc_id")
+    _ = delete_parser.add_argument(
+        "--permanent",
+        action="store_true",
+        help="Permanently delete instead of moving to trash (default is trash, recoverable)",
+    )
+
     search_parser = subparsers.add_parser("search")
     _ = search_parser.add_argument("query")
     _ = search_parser.add_argument("--max-results", type=int, default=10)
@@ -103,6 +111,12 @@ def run_command(args: argparse.Namespace) -> object:
 
     if command == "create":
         return client.create_document(title=str(data["title"]))
+
+    if command == "delete":
+        return client.delete_document(
+            str(data["doc_id"]),
+            permanent=bool(data["permanent"]),
+        )
 
     if command == "search":
         return client.search_documents(str(data["query"]), max_results=int(data["max_results"]))

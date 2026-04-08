@@ -2,8 +2,9 @@ from __future__ import annotations
 
 """Google Docs client: direct SDK wrapper."""
 
+import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -11,6 +12,46 @@ from googleapiclient.http import MediaFileUpload
 
 from .auth import get_credentials
 from .markdown import markdown_to_requests
+
+
+T = TypeVar("T")
+
+# HTTP status codes that indicate transient errors worth retrying.
+TRANSIENT_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+
+
+def _http_error_message(action: str, exc: HttpError) -> str:
+    """Build a rich error message from an HttpError including status and body.
+
+    Without this, callers see only "Failed to <action>" with no actionable
+    information about whether the error is transient (worth retrying) or
+    permanent (need to fix the request).
+    """
+    status = getattr(exc, "status_code", None) or getattr(exc.resp, "status", "?")
+    body = ""
+    if exc.content:
+        body = exc.content.decode("utf-8", errors="replace")
+        if len(body) > 1000:
+            body = body[:1000] + "...(truncated)"
+    return f"{action}: HTTP {status} — {body}".rstrip(" —")
+
+
+def _retry_transient(call: Callable[[], T], max_attempts: int = 4, base_delay: float = 1.0) -> T:
+    """Retry a callable on transient HttpError (429, 5xx).
+
+    Uses exponential backoff: 1s, 2s, 4s. Permanent errors (4xx other than 429)
+    fail immediately. Non-HTTP exceptions also fail immediately.
+    """
+    for attempt in range(max_attempts):
+        try:
+            return call()
+        except HttpError as exc:
+            status = getattr(exc, "status_code", None) or getattr(exc.resp, "status", None)
+            if status not in TRANSIENT_STATUS_CODES or attempt == max_attempts - 1:
+                raise
+            time.sleep(base_delay * (2 ** attempt))
+    # Unreachable: loop above always raises or returns.
+    raise RuntimeError("retry loop exited without result")
 
 
 class GoogleDocsClient:
@@ -28,9 +69,17 @@ class GoogleDocsClient:
         tabs: list[dict[str, str]] | None = None,
         content_format: str = "plain",
     ) -> dict[str, str]:
-        """Create a new Google Doc, optionally adding document tabs and content."""
+        """Create a new Google Doc, optionally adding document tabs and content.
+
+        Wraps the initial documents.create call in retry logic because Google
+        Docs API occasionally returns transient 5xx errors during document
+        creation. Subsequent batchUpdate calls are not retried because they may
+        have non-idempotent side effects on a partially-created document.
+        """
         try:
-            created = self.docs.documents().create(body={"title": title}).execute()
+            created = _retry_transient(
+                lambda: self.docs.documents().create(body={"title": title}).execute()
+            )
             doc_id = created["documentId"]
 
             tab_specs = tabs or []
@@ -128,7 +177,7 @@ class GoogleDocsClient:
 
             return {"id": doc_id, "link": f"https://docs.google.com/document/d/{doc_id}/edit"}
         except HttpError as exc:
-            raise RuntimeError(f"Failed to create document '{title}'") from exc
+            raise RuntimeError(_http_error_message(f"Failed to create document '{title}'", exc)) from exc
 
     def search_documents(
         self,
@@ -163,7 +212,7 @@ class GoogleDocsClient:
                 for item in files
             ]
         except HttpError as exc:
-            raise RuntimeError("Failed to search Google Docs") from exc
+            raise RuntimeError(_http_error_message("Failed to search Google Docs", exc)) from exc
 
     def modify_document(
         self, doc_id: str, text: str, tab_id: str | None = None, content_format: str = "plain"
@@ -183,7 +232,7 @@ class GoogleDocsClient:
             ).execute()
             return {"success": True, "doc_id": doc_id}
         except HttpError as exc:
-            raise RuntimeError(f"Failed to modify document '{doc_id}'") from exc
+            raise RuntimeError(_http_error_message(f"Failed to modify document '{doc_id}'", exc)) from exc
 
     def rename_tab(self, doc_id: str, tab_id: str, new_title: str) -> dict[str, object]:
         """Rename a document tab."""
@@ -199,7 +248,7 @@ class GoogleDocsClient:
             ).execute()
             return {"success": True, "tab_id": tab_id, "new_title": new_title}
         except HttpError as exc:
-            raise RuntimeError(f"Failed to rename tab '{tab_id}' in document '{doc_id}'") from exc
+            raise RuntimeError(_http_error_message(f"Failed to rename tab '{tab_id}' in document '{doc_id}'", exc)) from exc
 
     def replace_tab_content(
         self, doc_id: str, tab_id: str, text: str, content_format: str = "plain"
@@ -238,7 +287,7 @@ class GoogleDocsClient:
             ).execute()
             return {"success": True, "doc_id": doc_id, "tab_id": tab_id}
         except HttpError as exc:
-            raise RuntimeError(f"Failed to replace content in tab '{tab_id}'") from exc
+            raise RuntimeError(_http_error_message(f"Failed to replace content in tab '{tab_id}'", exc)) from exc
 
     def list_tabs(self, doc_id: str) -> list[dict[str, str]]:
         """List all tabs in a document with their IDs and titles."""
@@ -256,7 +305,7 @@ class GoogleDocsClient:
                 for tab in doc.get("tabs", [])
             ]
         except HttpError as exc:
-            raise RuntimeError(f"Failed to list tabs for document '{doc_id}'") from exc
+            raise RuntimeError(_http_error_message(f"Failed to list tabs for document '{doc_id}'", exc)) from exc
 
     def add_tab(
         self,
@@ -295,7 +344,7 @@ class GoogleDocsClient:
 
             return {"doc_id": doc_id, "tab_id": tab_id, "title": title}
         except HttpError as exc:
-            raise RuntimeError(f"Failed to add tab '{title}' to document '{doc_id}'") from exc
+            raise RuntimeError(_http_error_message(f"Failed to add tab '{title}' to document '{doc_id}'", exc)) from exc
 
     def update_title(self, doc_id: str, new_title: str) -> dict[str, object]:
         """Update document title via Drive metadata."""
@@ -303,7 +352,26 @@ class GoogleDocsClient:
             self.drive.files().update(fileId=doc_id, body={"name": new_title}).execute()
             return {"success": True, "new_title": new_title}
         except HttpError as exc:
-            raise RuntimeError(f"Failed to update title for document '{doc_id}'") from exc
+            raise RuntimeError(_http_error_message(f"Failed to update title for document '{doc_id}'", exc)) from exc
+
+    def delete_document(self, doc_id: str, permanent: bool = False) -> dict[str, object]:
+        """Delete a Google Doc.
+
+        By default, moves the document to Drive trash (recoverable for 30 days).
+        With permanent=True, deletes immediately and irreversibly. Trash is
+        the safer default and matches what users typically want when cleaning
+        up scaffold or test docs.
+        """
+        try:
+            if permanent:
+                self.drive.files().delete(fileId=doc_id).execute()
+                return {"success": True, "doc_id": doc_id, "mode": "permanent"}
+            self.drive.files().update(
+                fileId=doc_id, body={"trashed": True}
+            ).execute()
+            return {"success": True, "doc_id": doc_id, "mode": "trash"}
+        except HttpError as exc:
+            raise RuntimeError(_http_error_message(f"Failed to delete document '{doc_id}'", exc)) from exc
 
     def share_document(
         self,
@@ -332,7 +400,7 @@ class GoogleDocsClient:
             link_data = self.drive.files().get(fileId=doc_id, fields="webViewLink").execute()
             return {"success": True, "link": link_data.get("webViewLink", "")}
         except HttpError as exc:
-            raise RuntimeError(f"Failed to share document '{doc_id}'") from exc
+            raise RuntimeError(_http_error_message(f"Failed to share document '{doc_id}'", exc)) from exc
 
     def insert_image(
         self,
@@ -411,7 +479,7 @@ class GoogleDocsClient:
 
             return {"success": True, "doc_id": doc_id, "drive_file_id": file_id, "index": index}
         except HttpError as exc:
-            raise RuntimeError(f"Failed to insert image into document '{doc_id}'") from exc
+            raise RuntimeError(_http_error_message(f"Failed to insert image into document '{doc_id}'", exc)) from exc
 
     def get_share_link(self, doc_id: str, public: bool = False) -> str:
         """Return a document share link, optionally enabling public link access."""
@@ -428,4 +496,4 @@ class GoogleDocsClient:
             file_data = self.drive.files().get(fileId=doc_id, fields="webViewLink").execute()
             return str(file_data.get("webViewLink", ""))
         except HttpError as exc:
-            raise RuntimeError(f"Failed to get share link for document '{doc_id}'") from exc
+            raise RuntimeError(_http_error_message(f"Failed to get share link for document '{doc_id}'", exc)) from exc

@@ -241,4 +241,6 @@ def test_error_outputs_json_to_stderr(capsys):
     assert code == 1
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert json.loads(captured.err) == {"error": "create failed"}
+    payload = json.loads(captured.err)
+    assert payload["error"] == "create failed"
+    assert payload["type"] == "RuntimeError"
