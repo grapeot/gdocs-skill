@@ -481,6 +481,124 @@ class GoogleDocsClient:
         except HttpError as exc:
             raise RuntimeError(_http_error_message(f"Failed to insert image into document '{doc_id}'", exc)) from exc
 
+    def list_comments(self, doc_id: str, include_resolved: bool = True) -> list[dict[str, object]]:
+        """List all comments on a document via Drive API v3.
+
+        Args:
+            doc_id: The Google Doc ID.
+            include_resolved: If True, include resolved comments (default True).
+
+        Returns:
+            List of comment dicts with id, author, content, quoted_text,
+            created_time, resolved, and replies.
+        """
+        try:
+            comments: list[dict[str, object]] = []
+            page_token: str | None = None
+            while True:
+                kwargs: dict[str, object] = {
+                    "fileId": doc_id,
+                    "fields": "comments(id,author(displayName,emailAddress),content,quotedFileContent,createdTime,resolved,replies(id,author(displayName,emailAddress),content,createdTime)),nextPageToken",
+                    "pageSize": 100,
+                    "includeDeleted": False,
+                }
+                if page_token:
+                    kwargs["pageToken"] = page_token
+                response = _retry_transient(
+                    lambda kw=kwargs: self.drive.comments().list(**kw).execute()
+                )
+                for c in response.get("comments", []):
+                    author = c.get("author", {})
+                    quoted = c.get("quotedFileContent", {})
+                    replies_raw = c.get("replies", [])
+                    replies = [
+                        {
+                            "id": r.get("id", ""),
+                            "author": r.get("author", {}).get("displayName", ""),
+                            "content": r.get("content", ""),
+                            "created_time": r.get("createdTime", ""),
+                        }
+                        for r in replies_raw
+                    ]
+                    comment: dict[str, object] = {
+                        "id": c.get("id", ""),
+                        "author": author.get("displayName", ""),
+                        "content": c.get("content", ""),
+                        "quoted_text": quoted.get("value", "") if quoted else "",
+                        "created_time": c.get("createdTime", ""),
+                        "resolved": c.get("resolved", False),
+                        "replies": replies,
+                    }
+                    if not include_resolved and comment["resolved"]:
+                        continue
+                    comments.append(comment)
+                page_token = response.get("nextPageToken")
+                if not page_token:
+                    break
+            return comments
+        except HttpError as exc:
+            raise RuntimeError(_http_error_message(f"Failed to list comments for document '{doc_id}'", exc)) from exc
+
+    def reply_comment(self, doc_id: str, comment_id: str, content: str) -> dict[str, object]:
+        """Reply to a comment on a document via Drive API v3.
+
+        Args:
+            doc_id: The Google Doc ID.
+            comment_id: The comment ID to reply to.
+            content: The reply text.
+
+        Returns:
+            Dict with reply id, author, content, and created_time.
+        """
+        try:
+            reply = _retry_transient(
+                lambda: self.drive.replies().create(
+                    fileId=doc_id,
+                    commentId=comment_id,
+                    body={"content": content},
+                    fields="id,author/displayName,content,createdTime",
+                ).execute()
+            )
+            return {
+                "id": reply.get("id", ""),
+                "author": reply.get("author", {}).get("displayName", ""),
+                "content": reply.get("content", ""),
+                "created_time": reply.get("createdTime", ""),
+            }
+        except HttpError as exc:
+            raise RuntimeError(
+                _http_error_message(f"Failed to reply to comment '{comment_id}' on document '{doc_id}'", exc)
+            ) from exc
+
+    def resolve_comment(self, doc_id: str, comment_id: str) -> dict[str, object]:
+        """Mark a comment as resolved via Drive API v3.
+
+        Args:
+            doc_id: The Google Doc ID.
+            comment_id: The comment ID to resolve.
+
+        Returns:
+            Dict with comment id and resolved status.
+        """
+        try:
+            # Resolving a comment in Drive API is done by creating a reply with action="resolve"
+            result = _retry_transient(
+                lambda: self.drive.replies().create(
+                    fileId=doc_id,
+                    commentId=comment_id,
+                    body={"content": "", "action": "resolve"},
+                    fields="id,action",
+                ).execute()
+            )
+            return {
+                "id": result.get("id", ""),
+                "resolved": result.get("resolved", False),
+            }
+        except HttpError as exc:
+            raise RuntimeError(
+                _http_error_message(f"Failed to resolve comment '{comment_id}' on document '{doc_id}'", exc)
+            ) from exc
+
     def get_share_link(self, doc_id: str, public: bool = False) -> str:
         """Return a document share link, optionally enabling public link access."""
         try:

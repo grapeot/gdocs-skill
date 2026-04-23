@@ -79,6 +79,33 @@ def build_parser() -> argparse.ArgumentParser:
     _ = tab_add_parser.add_argument("file", type=Path, nargs="?", default=None)
     _ = tab_add_parser.add_argument("--format", choices=["plain", "markdown"], default="markdown")
 
+    comment_parser = subparsers.add_parser("comment")
+    comment_subparsers = comment_parser.add_subparsers(dest="comment_command", required=True)
+
+    comment_list_parser = comment_subparsers.add_parser("list")
+    _ = comment_list_parser.add_argument("doc_id")
+    _ = comment_list_parser.add_argument(
+        "--include-resolved",
+        action="store_true",
+        default=True,
+        help="Include resolved comments (default: True)",
+    )
+    _ = comment_list_parser.add_argument(
+        "--unresolved-only",
+        action="store_true",
+        default=False,
+        help="Show only unresolved comments",
+    )
+
+    comment_reply_parser = comment_subparsers.add_parser("reply")
+    _ = comment_reply_parser.add_argument("doc_id")
+    _ = comment_reply_parser.add_argument("comment_id")
+    _ = comment_reply_parser.add_argument("content")
+
+    comment_resolve_parser = comment_subparsers.add_parser("resolve")
+    _ = comment_resolve_parser.add_argument("doc_id")
+    _ = comment_resolve_parser.add_argument("comment_id")
+
     image_parser = subparsers.add_parser("image")
     _ = image_parser.add_argument("doc_id")
     _ = image_parser.add_argument("image_path", type=Path)
@@ -174,6 +201,23 @@ def run_command(args: argparse.Namespace) -> object:
             index=data.get("index"),
             tab_id=data.get("tab_id"),
             width_pts=float(data.get("width", 468)),
+        )
+
+    if command == "comment" and str(data["comment_command"]) == "list":
+        include_resolved = not bool(data.get("unresolved_only", False))
+        return client.list_comments(str(data["doc_id"]), include_resolved=include_resolved)
+
+    if command == "comment" and str(data["comment_command"]) == "reply":
+        return client.reply_comment(
+            str(data["doc_id"]),
+            str(data["comment_id"]),
+            str(data["content"]),
+        )
+
+    if command == "comment" and str(data["comment_command"]) == "resolve":
+        return client.resolve_comment(
+            str(data["doc_id"]),
+            str(data["comment_id"]),
         )
 
     raise RuntimeError("Unknown command")

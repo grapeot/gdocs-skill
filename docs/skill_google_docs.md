@@ -10,7 +10,8 @@
 - "搜索我的 Google Docs"
 - "把这个文档分享给 xxx"
 - "修改那个文档的标题 / 内容"
-- 任何涉及 Google Docs 创建、搜索、修改、分享的需求
+- "这个文档上有什么 comments"、"看看评论"
+- 任何涉及 Google Docs 创建、搜索、修改、分享、评论的需求
 
 ## Prerequisites
 
@@ -136,7 +137,35 @@ python -m gdocs link DOC_ID --public
 | `> 引用文本` | 引用块（左缩进 + 左边框） |
 | `\| col \| col \|` | 原生表格（表头自动加粗） |
 
-### 场景 7：在文档中插入本地图片
+### 场景 7：查看文档上的评论
+
+列出所有 comments（包括已解决的）：
+
+```bash
+python -m gdocs comment list DOC_ID
+```
+
+只看未解决的 comments：
+
+```bash
+python -m gdocs comment list DOC_ID --unresolved-only
+```
+
+输出 JSON 数组，每个 comment 包含 `id`、`author`、`content`、`quoted_text`（引用的原文片段）、`created_time`、`resolved`、`replies`。
+
+回复评论：
+
+```bash
+python -m gdocs comment reply DOC_ID COMMENT_ID "回复内容"
+```
+
+解决评论（标记为已解决）：
+
+```bash
+python -m gdocs comment resolve DOC_ID COMMENT_ID
+```
+
+### 场景 8：在文档中插入本地图片
 
 ```bash
 python -m gdocs image DOC_ID path/to/image.png --width 468
