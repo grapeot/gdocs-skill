@@ -48,6 +48,16 @@ AI agent 接收 Markdown 格式的文本，自动转换为 Google Docs 原生格
 
 AI agent 执行 `python -m gdocs publish report.md --title "报告"`，一行命令完成 Markdown 文件到 Google Docs 的发布。所有输出为 JSON 格式，方便程序化处理。CLI 封装了认证、格式转换、API 调用的全部细节。
 
+### 场景 8：幂等地同步 Markdown 到 Google Docs（MD 即 source of truth）
+
+用户说："我改了 `outline_v1.md`，同步到 Google Docs。"
+
+问题背景：`publish` 每次都会新建 doc，不能处理"同一份 MD 持续更新到同一个 doc"的场景。历史做法是让 AI agent 翻过去的会话找 Doc ID 再手动 `tab replace`，不稳定且费 context。
+
+解决方案：`python -m gdocs sync file.md` 读取文件开头的 YAML front matter，从里面拿 `gdoc_id` 和 `gdoc_tab_id`；有就 tab replace，没有就 create 并把 ID 写回 front matter。MD 文件因此成为自己的 source of truth——文件走到哪、Doc 映射跟到哪。
+
+首次绑定到已有 Doc：`python -m gdocs sync file.md --gdoc-id ID --tab-id t.xxx`，CLI 把两个 ID 写进 front matter，之后不用再传。
+
 ## 3. 功能范围
 
 ### 第一期（MVP）
@@ -64,6 +74,7 @@ AI agent 执行 `python -m gdocs publish report.md --title "报告"`，一行命
 | 修改文档标题 | P1 | 通过 Drive API 更新 name 字段 |
 | 分享文档 | P1 | 添加用户权限（reader/writer/commenter） |
 | 获取分享链接 | P1 | 返回 webViewLink，可设置公开访问 |
+| 幂等同步（sync） | P0 | 基于 MD front matter 的 create-or-replace。MD 文件持有自己的 doc id/tab id 映射 |
 
 ### 不做（Out of Scope）
 

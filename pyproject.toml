@@ -8,6 +8,7 @@ dependencies = [
     "google-api-python-client",
     "google-auth",
     "google-auth-oauthlib",
+    "pyyaml",
 ]
 
 [project.optional-dependencies]

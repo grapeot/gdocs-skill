@@ -6,13 +6,20 @@ import argparse
 import json
 import sys
 from collections.abc import Sequence
+from datetime import datetime, timezone
 from pathlib import Path
 
 from googleapiclient.errors import HttpError
 from gdocs.client import GoogleDocsClient
+from gdocs.frontmatter import FrontMatter, parse as parse_frontmatter, serialize as serialize_frontmatter
 
 
 DEFAULT_SECRETS_DIR = Path(__file__).resolve().parent.parent / "secrets"
+
+
+FM_DOC_ID = "gdoc_id"
+FM_TAB_ID = "gdoc_tab_id"
+FM_LAST_SYNCED = "gdoc_last_synced"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -26,6 +33,31 @@ def build_parser() -> argparse.ArgumentParser:
     _ = publish_parser.add_argument("--title", required=True)
     _ = publish_parser.add_argument("--share")
     _ = publish_parser.add_argument("--role", default="writer")
+
+    sync_parser = subparsers.add_parser(
+        "sync",
+        help="Idempotent publish: read front matter, create or update the bound Google Doc.",
+    )
+    _ = sync_parser.add_argument("file", type=Path)
+    _ = sync_parser.add_argument("--title", help="Doc title (required on first sync)")
+    _ = sync_parser.add_argument(
+        "--gdoc-id",
+        help="Bind this MD to an existing Google Doc (writes to front matter)",
+    )
+    _ = sync_parser.add_argument(
+        "--tab-id",
+        help="Bind this MD to a specific tab inside the Google Doc (writes to front matter)",
+    )
+    _ = sync_parser.add_argument(
+        "--share",
+        help="On first create, share with this email",
+    )
+    _ = sync_parser.add_argument("--role", default="writer")
+    _ = sync_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print what would happen without calling any API or mutating the file",
+    )
 
     create_parser = subparsers.add_parser("create")
     _ = create_parser.add_argument("--title", required=True)
@@ -116,6 +148,91 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _sync(
+    client: GoogleDocsClient,
+    file_path: Path,
+    title: str | None,
+    gdoc_id_override: str | None,
+    tab_id_override: str | None,
+    share: str | None,
+    role: str,
+    dry_run: bool,
+) -> dict[str, object]:
+    """Idempotent sync: read front matter, create-or-replace the bound doc.
+
+    Resolution order for the doc/tab binding:
+      1. CLI overrides (--gdoc-id / --tab-id)
+      2. Existing front matter values
+      3. If neither gives a doc id, create a new document.
+    """
+    raw = file_path.read_text(encoding="utf-8")
+    fm = parse_frontmatter(raw)
+
+    doc_id: str | None = gdoc_id_override or fm.get(FM_DOC_ID)
+    tab_id: str | None = tab_id_override or fm.get(FM_TAB_ID)
+
+    if doc_id:
+        action = "replace"
+        target_tab = tab_id or "t.0"
+        if dry_run:
+            return {
+                "dry_run": True,
+                "action": action,
+                "doc_id": doc_id,
+                "tab_id": target_tab,
+                "file": str(file_path),
+            }
+        _ = client.replace_tab_content(
+            doc_id, target_tab, fm.body, content_format="markdown"
+        )
+        fm.set(FM_DOC_ID, doc_id)
+        if tab_id:
+            fm.set(FM_TAB_ID, tab_id)
+        fm.set(FM_LAST_SYNCED, _utc_now_iso())
+        file_path.write_text(serialize_frontmatter(fm), encoding="utf-8")
+        return {
+            "action": action,
+            "doc_id": doc_id,
+            "tab_id": target_tab,
+            "link": f"https://docs.google.com/document/d/{doc_id}/edit",
+            "front_matter_updated": True,
+        }
+
+    if not title:
+        raise ValueError(
+            "First sync requires --title (no gdoc_id in front matter and no --gdoc-id given)"
+        )
+    if dry_run:
+        return {
+            "dry_run": True,
+            "action": "create",
+            "title": title,
+            "file": str(file_path),
+        }
+    created = client.create_document(
+        title=title,
+        tabs=[{"title": title, "content": fm.body}],
+        content_format="markdown",
+    )
+    new_doc_id = created["id"]
+    if share:
+        _ = client.share_document(new_doc_id, share, role=role)
+
+    fm.set(FM_DOC_ID, new_doc_id)
+    fm.set(FM_LAST_SYNCED, _utc_now_iso())
+    file_path.write_text(serialize_frontmatter(fm), encoding="utf-8")
+    return {
+        "action": "create",
+        "doc_id": new_doc_id,
+        "link": created.get("link", f"https://docs.google.com/document/d/{new_doc_id}/edit"),
+        "front_matter_updated": True,
+    }
+
+
 def run_command(args: argparse.Namespace) -> object:
     data = vars(args)
     secrets_dir = Path(data["secrets_dir"])
@@ -135,6 +252,18 @@ def run_command(args: argparse.Namespace) -> object:
         if share_target:
             _ = client.share_document(created["id"], str(share_target), role=str(data["role"]))
         return {"id": created["id"], "link": created["link"]}
+
+    if command == "sync":
+        return _sync(
+            client,
+            file_path=Path(data["file"]),
+            title=data.get("title"),
+            gdoc_id_override=data.get("gdoc_id"),
+            tab_id_override=data.get("tab_id"),
+            share=data.get("share"),
+            role=str(data.get("role") or "writer"),
+            dry_run=bool(data.get("dry_run", False)),
+        )
 
     if command == "create":
         return client.create_document(title=str(data["title"]))

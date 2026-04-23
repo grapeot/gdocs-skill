@@ -121,9 +121,10 @@ adhoc_jobs/gdocs_skill/
 │   └── token.json              # 授权后的 token（自动生成）
 ├── gdocs/                      # Python 包（可通过 python -m gdocs 调用）
 │   ├── __init__.py
-│   ├── __main__.py             # CLI 入口（argparse）
+│   ├── __main__.py             # CLI 入口（argparse），sync orchestrator 在此
 │   ├── auth.py                 # OAuth 认证模块
 │   ├── client.py               # GoogleDocsClient（SDK 封装）
+│   ├── frontmatter.py          # YAML front matter 解析/序列化
 │   └── markdown.py             # Markdown → Google Docs API 转换
 ├── tests/
 │   ├── unit/                   # 单元测试
@@ -187,8 +188,9 @@ class GoogleDocsClient:
 | `google-api-python-client` | latest | Google 官方 | API 客户端 |
 | `google-auth` | latest | Google 官方 | 凭证管理 |
 | `google-auth-oauthlib` | latest | Google 官方 | OAuth 2.0 流程 |
+| `pyyaml` | latest | 社区（Kirill Simonov 维护） | 解析/序列化 MD front matter |
 
-无任何第三方运行时依赖。
+除 PyYAML 外无其他第三方运行时依赖。PyYAML 是 Python 生态最稳定的 YAML 库，用于 `sync` 命令读写 MD 文件的 front matter。
 
 ### 4.5 OAuth Scope
 
@@ -260,7 +262,8 @@ Google Docs 使用 1-based 索引。`insertText` 在 `start_index`（默认 1）
 
 | 子命令 | 用途 | 示例 |
 |--------|------|------|
-| `publish <file>` | 发布 Markdown 文件为 Google Doc | `python -m gdocs publish report.md --title "报告"` |
+| `publish <file>` | 一次性发布 Markdown 为新 Google Doc（不回写 front matter） | `python -m gdocs publish report.md --title "报告"` |
+| `sync <file>` | 幂等同步，基于 MD front matter 做 create-or-replace | `python -m gdocs sync report.md --title "报告"` |
 | `create` | 创建空文档 | `python -m gdocs create --title "新文档"` |
 | `search <query>` | 搜索文档 | `python -m gdocs search "前线"` |
 | `share <doc_id>` | 分享文档 | `python -m gdocs share DOC_ID --email user@example.com` |
@@ -268,6 +271,58 @@ Google Docs 使用 1-based 索引。`insertText` 在 `start_index`（默认 1）
 | `link <doc_id>` | 获取链接 | `python -m gdocs link DOC_ID --public` |
 | `tab rename` | 重命名 Tab | `python -m gdocs tab rename DOC_ID TAB_ID "新名"` |
 | `tab replace` | 替换 Tab 内容 | `python -m gdocs tab replace DOC_ID TAB_ID file.md` |
+
+## 6.5 幂等同步设计（`sync`）
+
+### 设计动机
+
+`publish` 每次都会新建 doc。实际工作流里很多 Markdown 文件会反复修改（合伙人 review、客户评审、版本迭代），需要每次更新同一个 doc，而不是产生一堆重复 doc。
+
+早期做法：AI agent 在历史 session 里搜历史命令找 Doc ID，再手动 `tab replace`。不稳定（找不到就得重新查）、费 context（grep 大量 session 文件）、无法表达"这份 MD 绑定到哪个 doc"这件事。
+
+### Source of Truth 放在哪里
+
+评估过三种方案：
+
+1. **独立 JSON mapping 文件**（如 `~/.gdocs/mappings.json`）—— 缺点：MD 移动/改名会失效；跨 repo 协作时映射分散
+2. **Sidecar 文件**（如 `file.md.gdocs.yml`）—— 缺点：文件数翻倍；移动 MD 容易漏掉 sidecar
+3. **Markdown front matter**（选中方案）—— 优点：和文件本身绑死，移动/改名不丢映射；人眼可见；git 可追踪
+
+采用 YAML front matter，和 Jekyll / Hugo 等静态站点生成器的约定一致。
+
+### Schema
+
+```yaml
+---
+gdoc_id: 1CLveZUmbU22YT_i5TGjhysSsxxFOM9h_r_b2-tvjMQ8
+gdoc_tab_id: t.t6qmc76tli6j   # 可选，没有就写默认 tab t.0
+gdoc_last_synced: 2026-04-23T21:31:38Z
+---
+
+# 正文从这里开始
+```
+
+### CLI 行为
+
+`python -m gdocs sync file.md` 的决策树：
+
+1. 读文件，解析 front matter
+2. 解析 `gdoc_id` 来源优先级：`--gdoc-id` 参数 > front matter `gdoc_id` 字段
+3. 如果拿到 `gdoc_id` → 调 `replace_tab_content(doc_id, tab_id or "t.0", body, format="markdown")`
+4. 否则 → 调 `create_document(title, tabs=[{title, content: body}])`，把 `gdoc_id` 写回 front matter
+5. 每次都更新 `gdoc_last_synced`
+
+写入 Google Doc 时 body 不含 front matter（读者看到的 doc 干净）。
+
+`--dry-run` 打印将要执行的动作但不调 API、不写文件，用于 AI agent 先 preview 再确认执行。
+
+### 分工：sync 是 orchestrator
+
+`_sync()` 函数在 `__main__.py` 里，不在 `client.py`。原因是 sync 涉及文件 I/O 和 front matter 读写，不属于 Google API 封装。`GoogleDocsClient` 继续保持纯 API 职责，sync 只是组合 `create_document` 和 `replace_tab_content` 两个已有方法，加上 front matter 解析/序列化层。
+
+### 依赖
+
+PyYAML 加入运行时依赖。考虑过自写 mini-parser 保持零第三方依赖，但 YAML 的细节（引号、转义、unicode、日期）自己处理容易出错，成本不划算。PyYAML 是 Python 生态最稳定的 YAML 库，`safe_load` + `safe_dump` 覆盖所有需要。
 
 ## 7. API 调用模式
 

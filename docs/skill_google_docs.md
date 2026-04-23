@@ -1,12 +1,13 @@
 # Skill: Google Docs 操作
 
-通过 CLI 命令操控 Google Docs：发布 Markdown 文件、创建文档、搜索、修改、分享、Tab 管理。
+通过 CLI 命令操控 Google Docs：同步 Markdown 文件、创建文档、搜索、修改、分享、Tab 管理。
 
 ## When to Use
 
 用户说出以下意图时触发：
 - "帮我创建一个 Google Doc"
 - "把这个 Markdown 发到 Google Docs"
+- "这份 MD 改了，更新到 Google Docs" / "重新同步一下" → 优先用 `sync`
 - "搜索我的 Google Docs"
 - "把这个文档分享给 xxx"
 - "修改那个文档的标题 / 内容"
@@ -30,9 +31,47 @@ cd /path/to/knowledge_working/adhoc_jobs/gdocs_skill && source .venv/bin/activat
 
 ## 常见场景
 
-### 场景 1：把一个 Markdown 文件发布到 Google Docs
+### 场景 0：幂等同步 Markdown（最常见，优先用）
 
-这是最常见的需求。
+**当 MD 文件会被反复修改、需要持续更新到同一个 Google Doc 时，用 `sync` 而不是 `publish`。**
+
+`sync` 基于 MD 文件开头的 YAML front matter 记录 doc 绑定：
+
+```yaml
+---
+gdoc_id: 1CLveZUmbU22YT_i5TGjhysSsxxFOM9h_r_b2-tvjMQ8
+gdoc_tab_id: t.t6qmc76tli6j   # 可选，没有就写默认 tab t.0
+gdoc_last_synced: 2026-04-23T21:31:38Z
+---
+
+# 正文从这里开始
+```
+
+三种用法：
+
+```bash
+# 1) 首次 sync（还没有 doc）— 创建新 doc，把 doc_id 写回 front matter
+python -m gdocs sync report.md --title "报告"
+
+# 2) 已有 front matter — 自动 tab replace，更新 gdoc_last_synced
+python -m gdocs sync report.md
+
+# 3) 绑定到已有 doc 的特定 tab — 把两个 id 写进 front matter，同时更新 tab 内容
+python -m gdocs sync report.md --gdoc-id DOC_ID --tab-id t.xxx
+```
+
+`--dry-run` 打印将要执行的动作（action: create / replace + doc_id + tab_id），不调 API、不写文件。面对已绑定的 MD 时先 dry-run 确认目标是对的，再执行。
+
+**sync 的好处**：
+- 幂等——MD 文件持有自己的 doc 映射，AI agent 不需要翻历史找 ID
+- source of truth 跟着 MD 走——移动/改名文件不会丢映射
+- 不会产生重复 doc
+
+**何时用 publish 而不是 sync**：
+- 一次性 throwaway 文档（不打算后续更新）
+- 不想在 MD 里出现 front matter
+
+### 场景 1：把一个 Markdown 文件一次性发布到 Google Docs（不回写 front matter）
 
 ```bash
 python -m gdocs publish path/to/report.md --title "AI 前线 2026-03-08"

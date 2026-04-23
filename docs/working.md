@@ -2,6 +2,20 @@
 
 ## Changelog
 
+### 2026-04-23
+
+- 新增 `sync` CLI 子命令：基于 MD front matter 的幂等发布 / 更新
+  - 动机：`publish` 每次新建 doc，无法处理"同一份 MD 持续更新到同一个 doc"。历史做法需要 AI agent 翻会话找 Doc ID，不稳定且费 context
+  - Schema：YAML front matter 里的 `gdoc_id` / `gdoc_tab_id` / `gdoc_last_synced` 三个字段，MD 成为自己 doc 映射的 source of truth
+  - 决策树：`--gdoc-id` 覆盖 > front matter 字段；有 id 走 `replace_tab_content`（默认 tab `t.0`），无 id 走 `create_document` 并把 id 写回 front matter
+  - 支持 `--dry-run` 预演，`--share` / `--role` / `--tab-id` / `--title` 等辅助参数
+  - 新增 `gdocs/frontmatter.py`（~90 行）封装 YAML front matter 解析 / 序列化，用 PyYAML
+  - sync orchestrator 本身在 `__main__.py`（`_sync()` 函数），`GoogleDocsClient` 保持纯 API 职责
+  - 新增依赖：PyYAML（打破之前"零第三方运行时依赖"的约束，但 YAML 细节自写容易踩坑，成本不划算）
+  - 新增 19 个单元测试（test_frontmatter.py 11 个 + test_sync.py 8 个），覆盖 parse / serialize / create 路径 / replace 路径 / dry-run / front matter 写回
+  - 已实地验证：把 `tencent_game/v1_strategy/docs/outline_v1.md` 绑定到 V1 tab，front matter 成功写回，Google Doc V1 tab 同步更新
+- 新增 `comment list / reply / resolve` CLI 子命令（基于 Drive API v3）
+
 ### 2026-03-09
 
 - 新增 `tab list DOC_ID` CLI 命令：列出文档所有 tab 的 ID 和标题
