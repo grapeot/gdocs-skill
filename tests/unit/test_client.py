@@ -80,22 +80,36 @@ def test_create_document_with_tabs(client_env):
 
     assert result["id"] == "doc-tabs"
     assert "doc-tabs" in result["link"]
-    assert docs_service.documents.return_value.batchUpdate.call_count == 2
+    assert docs_service.documents.return_value.batchUpdate.call_count == 3
 
-    add_tabs_call = docs_service.documents.return_value.batchUpdate.call_args_list[0]
+    first_tab_call = docs_service.documents.return_value.batchUpdate.call_args_list[0]
+    first_tab_requests = first_tab_call.kwargs["body"]["requests"]
+    assert first_tab_requests[0]["updateDocumentTabProperties"]["tabProperties"] == {
+        "tabId": "tab-1",
+        "title": "Overview",
+    }
+    assert first_tab_requests[1]["insertText"]["location"]["tabId"] == "tab-1"
+    assert first_tab_requests[1]["insertText"]["text"] == "Overview content"
+
+    add_tabs_call = docs_service.documents.return_value.batchUpdate.call_args_list[1]
     add_tabs_requests = add_tabs_call.kwargs["body"]["requests"]
     assert all("addDocumentTab" in req for req in add_tabs_requests)
-    assert len(add_tabs_requests) == 2
+    assert len(add_tabs_requests) == 1
+    assert add_tabs_requests[0]["addDocumentTab"]["tabProperties"] == {"title": "Notes"}
 
-    docs_service.documents.return_value.get.assert_called_once_with(
-        documentId="doc-tabs", includeTabsContent=True, fields="tabs(tabProperties(tabId,title))"
-    )
+    assert docs_service.documents.return_value.get.call_count == 2
+    for call in docs_service.documents.return_value.get.call_args_list:
+        assert call.kwargs == {
+            "documentId": "doc-tabs",
+            "includeTabsContent": True,
+            "fields": "tabs(tabProperties(tabId,title))",
+        }
 
-    insert_text_call = docs_service.documents.return_value.batchUpdate.call_args_list[1]
+    insert_text_call = docs_service.documents.return_value.batchUpdate.call_args_list[2]
     insert_requests = insert_text_call.kwargs["body"]["requests"]
-    assert len(insert_requests) == 2
-    assert insert_requests[0]["insertText"]["location"]["tabId"] == "tab-1"
-    assert insert_requests[1]["insertText"]["location"]["tabId"] == "tab-2"
+    assert len(insert_requests) == 1
+    assert insert_requests[0]["insertText"]["location"]["tabId"] == "tab-2"
+    assert insert_requests[0]["insertText"]["text"] == "Notes content"
 
 
 def test_search_documents_basic(client_env):
@@ -325,9 +339,19 @@ def test_create_document_with_tabs_markdown(client_env):
 
     assert result["id"] == "doc-tabs-md"
     md_to_requests.assert_called_once_with("# Intro", tab_id="tab-md-1", start_index=1)
-    assert docs_service.documents.return_value.batchUpdate.call_count == 2
-    write_call = docs_service.documents.return_value.batchUpdate.call_args_list[1]
-    assert write_call.kwargs["body"]["requests"] == markdown_requests
+    docs_service.documents.return_value.get.assert_called_once_with(
+        documentId="doc-tabs-md",
+        includeTabsContent=True,
+        fields="tabs(tabProperties(tabId,title))",
+    )
+    assert docs_service.documents.return_value.batchUpdate.call_count == 1
+    write_call = docs_service.documents.return_value.batchUpdate.call_args_list[0]
+    write_requests = write_call.kwargs["body"]["requests"]
+    assert write_requests[0]["updateDocumentTabProperties"]["tabProperties"] == {
+        "tabId": "tab-md-1",
+        "title": "Overview",
+    }
+    assert write_requests[1:] == markdown_requests
 
 
 def test_rename_tab(client_env):
