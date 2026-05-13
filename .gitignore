@@ -14,6 +14,9 @@ credentials.json
 token.json
 *.pickle
 
+# Local Gmail cache (contains private email data)
+data/
+
 # IDE
 .vscode/
 .idea/
