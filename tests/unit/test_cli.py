@@ -244,3 +244,121 @@ def test_error_outputs_json_to_stderr(capsys):
     payload = json.loads(captured.err)
     assert payload["error"] == "create failed"
     assert payload["type"] == "RuntimeError"
+
+
+def test_gmail_send_dry_run_reads_body_file(capsys, tmp_path):
+    body_path = tmp_path / "body.txt"
+    body_path.write_text("Hello", encoding="utf-8")
+    with patch("gdocs.__main__.GmailClient") as gmail_cls, patch("gdocs.__main__.MailStore") as store_cls:
+        gmail = gmail_cls.return_value
+        gmail.send_message.return_value = {"dry_run": True, "sent": False}
+
+        code = main([
+            "--mail-data-dir",
+            str(tmp_path / "mail"),
+            "gmail",
+            "send",
+            "--to",
+            "recipient@example.com",
+            "--subject",
+            "Hello",
+            "--body-file",
+            str(body_path),
+            "--dry-run",
+        ])
+
+    assert code == 0
+    gmail.send_message.assert_called_once_with(
+        to=["recipient@example.com"],
+        cc=[],
+        bcc=[],
+        subject="Hello",
+        body_text="Hello",
+        body_format="text",
+        dry_run=True,
+    )
+    store_cls.return_value.close.assert_called_once_with()
+    assert json.loads(capsys.readouterr().out) == {"dry_run": True, "sent": False}
+
+
+def test_gmail_search_resolves_labels(capsys, tmp_path):
+    with patch("gdocs.__main__.GmailClient") as gmail_cls, patch("gdocs.__main__.MailStore"):
+        gmail = gmail_cls.return_value
+        gmail.resolve_label_id.return_value = "INBOX"
+        gmail.search_messages.return_value = [{"gmail_id": "msg-1", "thread_id": "thr-1"}]
+
+        code = main([
+            "--mail-data-dir",
+            str(tmp_path / "mail"),
+            "gmail",
+            "search",
+            "newer_than:1d",
+            "--label",
+            "INBOX",
+            "--limit",
+            "5",
+        ])
+
+    assert code == 0
+    gmail.search_messages.assert_called_once_with(
+        query="newer_than:1d",
+        label_ids=["INBOX"],
+        max_results=5,
+        include_spam_trash=False,
+    )
+    assert json.loads(capsys.readouterr().out) == [{"gmail_id": "msg-1", "thread_id": "thr-1"}]
+
+
+def test_gmail_read_lists_matches_when_no_selection(capsys, tmp_path):
+    fake_message = type(
+        "FakeMessage",
+        (),
+        {
+            "gmail_id": "msg-1",
+            "thread_id": "thr-1",
+            "subject": "Hello",
+            "from_addr": "sender@example.com",
+            "to_addr": "recipient@example.com",
+            "cc_addr": "",
+            "date": "today",
+            "labels": ["INBOX"],
+            "mime_path": tmp_path / "message.eml",
+            "downloaded_at": "now",
+        },
+    )()
+    with patch("gdocs.__main__.GmailClient"), patch("gdocs.__main__.MailStore") as store_cls:
+        store = store_cls.return_value
+        store.find_messages.return_value = [fake_message]
+
+        code = main([
+            "--mail-data-dir",
+            str(tmp_path / "mail"),
+            "gmail",
+            "read",
+            "--subject",
+            "Hello",
+        ])
+
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["match_count"] == 1
+    assert payload["matches"][0]["gmail_id"] == "msg-1"
+
+
+def test_gmail_archive_dry_run(capsys, tmp_path):
+    with patch("gdocs.__main__.GmailClient") as gmail_cls, patch("gdocs.__main__.MailStore"):
+        gmail = gmail_cls.return_value
+        gmail.archive_message.return_value = {"dry_run": True, "gmail_id": "msg-1"}
+
+        code = main([
+            "--mail-data-dir",
+            str(tmp_path / "mail"),
+            "gmail",
+            "archive",
+            "msg-1",
+            "--dry-run",
+        ])
+
+    assert code == 0
+    gmail.archive_message.assert_called_once_with("msg-1", dry_run=True)
+    assert json.loads(capsys.readouterr().out)["dry_run"] is True

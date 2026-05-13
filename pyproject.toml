@@ -21,4 +21,5 @@ dev = [
 testpaths = ["tests"]
 markers = [
     "integration: marks tests that hit real Google API (deselect with '-m \"not integration\"')",
+    "live_integration: marks opt-in tests that hit live Gmail APIs",
 ]

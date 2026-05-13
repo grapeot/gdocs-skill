@@ -8,13 +8,17 @@ import sys
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import cast
 
 from googleapiclient.errors import HttpError
 from gdocs.client import GoogleDocsClient
-from gdocs.frontmatter import FrontMatter, parse as parse_frontmatter, serialize as serialize_frontmatter
+from gdocs.frontmatter import parse as parse_frontmatter, serialize as serialize_frontmatter
+from gdocs.gmail_client import GmailClient
+from gdocs.mail_store import MailStore, StoredMessage
 
 
 DEFAULT_SECRETS_DIR = Path(__file__).resolve().parent.parent / "secrets"
+DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "mail"
 
 
 FM_DOC_ID = "gdoc_id"
@@ -25,6 +29,7 @@ FM_LAST_SYNCED = "gdoc_last_synced"
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="gdocs")
     _ = parser.add_argument("--secrets-dir", type=Path, default=DEFAULT_SECRETS_DIR)
+    _ = parser.add_argument("--mail-data-dir", type=Path, default=DEFAULT_DATA_DIR)
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -145,6 +150,76 @@ def build_parser() -> argparse.ArgumentParser:
     _ = image_parser.add_argument("--tab-id")
     _ = image_parser.add_argument("--width", type=float, default=468, help="Width in points (468 = full width)")
 
+    gmail_parser = subparsers.add_parser("gmail")
+    gmail_subparsers = gmail_parser.add_subparsers(dest="gmail_command", required=True)
+
+    gmail_profile = gmail_subparsers.add_parser("profile")
+    _ = gmail_profile
+
+    gmail_download = gmail_subparsers.add_parser("download")
+    _ = gmail_download.add_argument("--days", type=int, default=7)
+    _ = gmail_download.add_argument("--limit", type=int, default=200)
+    _ = gmail_download.add_argument("--label", action="append")
+    _ = gmail_download.add_argument("--query")
+    _ = gmail_download.add_argument("--include-spam-trash", action="store_true")
+
+    gmail_search = gmail_subparsers.add_parser("search")
+    _ = gmail_search.add_argument("query")
+    _ = gmail_search.add_argument("--limit", type=int, default=20)
+    _ = gmail_search.add_argument("--label", action="append")
+    _ = gmail_search.add_argument("--include-spam-trash", action="store_true")
+
+    gmail_list_local = gmail_subparsers.add_parser("list-local")
+    _ = gmail_list_local.add_argument("--limit", type=int, default=50)
+
+    gmail_read = gmail_subparsers.add_parser("read")
+    _ = gmail_read.add_argument("--gmail-id")
+    _ = gmail_read.add_argument("--subject")
+    _ = gmail_read.add_argument("--from", dest="from_filter")
+    _ = gmail_read.add_argument("--latest", action="store_true")
+    _ = gmail_read.add_argument("--index", type=int)
+    _ = gmail_read.add_argument("--full", action="store_true")
+
+    gmail_export_md = gmail_subparsers.add_parser("export-md")
+    _ = gmail_export_md.add_argument("--limit", type=int, default=100)
+    _ = gmail_export_md.add_argument("--subject")
+    _ = gmail_export_md.add_argument("--from", dest="from_filter")
+    _ = gmail_export_md.add_argument("--output-dir", type=Path)
+    _ = gmail_export_md.add_argument("--unsafe-output-dir", action="store_true")
+    _ = gmail_export_md.add_argument("--force", action="store_true")
+
+    gmail_send = gmail_subparsers.add_parser("send")
+    _ = gmail_send.add_argument("--to", action="append", required=True)
+    _ = gmail_send.add_argument("--cc", action="append")
+    _ = gmail_send.add_argument("--bcc", action="append")
+    _ = gmail_send.add_argument("--subject", required=True)
+    _ = gmail_send.add_argument("--body-file", type=Path, required=True)
+    _ = gmail_send.add_argument("--body-format", choices=["text", "html", "markdown", "md"], default="text")
+    _ = gmail_send.add_argument("--dry-run", action="store_true")
+
+    gmail_reply = gmail_subparsers.add_parser("reply")
+    _ = gmail_reply.add_argument("--gmail-id", required=True)
+    _ = gmail_reply.add_argument("--body-file", type=Path, required=True)
+    _ = gmail_reply.add_argument("--body-format", choices=["text", "html", "markdown", "md"], default="text")
+    _ = gmail_reply.add_argument("--to", action="append")
+    _ = gmail_reply.add_argument("--cc", action="append")
+    _ = gmail_reply.add_argument("--dry-run", action="store_true")
+
+    for command_name in ("archive", "trash", "mark-read", "mark-unread"):
+        command_parser = gmail_subparsers.add_parser(command_name)
+        _ = command_parser.add_argument("gmail_id")
+        _ = command_parser.add_argument("--dry-run", action="store_true")
+
+    gmail_label = gmail_subparsers.add_parser("label")
+    gmail_label_subparsers = gmail_label.add_subparsers(dest="gmail_label_command", required=True)
+    gmail_label_list = gmail_label_subparsers.add_parser("list")
+    _ = gmail_label_list
+    for command_name in ("apply", "remove"):
+        command_parser = gmail_label_subparsers.add_parser(command_name)
+        _ = command_parser.add_argument("gmail_id")
+        _ = command_parser.add_argument("--label", required=True)
+        _ = command_parser.add_argument("--dry-run", action="store_true")
+
     return parser
 
 
@@ -237,6 +312,8 @@ def run_command(args: argparse.Namespace) -> object:
     data = vars(args)
     secrets_dir = Path(data["secrets_dir"])
     command = str(data["command"])
+    if command == "gmail":
+        return _run_gmail_command(data, secrets_dir, Path(data["mail_data_dir"]))
     client = GoogleDocsClient(secrets_dir=secrets_dir)
 
     if command == "publish":
@@ -350,6 +427,199 @@ def run_command(args: argparse.Namespace) -> object:
         )
 
     raise RuntimeError("Unknown command")
+
+
+def _run_gmail_command(data: dict[str, object], secrets_dir: Path, data_dir: Path) -> object:
+    gmail = GmailClient(secrets_dir=secrets_dir)
+    store = MailStore(data_dir)
+    try:
+        command = str(data["gmail_command"])
+        if command == "profile":
+            return gmail.get_profile()
+        if command == "download":
+            return _gmail_download(gmail, store, data)
+        if command == "search":
+            labels = _resolve_labels(gmail, data.get("label"))
+            return gmail.search_messages(
+                query=str(data["query"]),
+                label_ids=labels,
+                max_results=_int_arg(data, "limit"),
+                include_spam_trash=bool(data.get("include_spam_trash", False)),
+            )
+        if command == "list-local":
+            return [_stored_message_json(item) for item in store.list_messages(limit=_int_arg(data, "limit"))]
+        if command == "read":
+            return _gmail_read(store, data)
+        if command == "export-md":
+            return {
+                "exported": store.export_markdown(
+                    output_dir=cast(Path | None, data.get("output_dir")) if isinstance(data.get("output_dir"), Path) else None,
+                    allow_unsafe_output_dir=bool(data.get("unsafe_output_dir", False)),
+                    force=bool(data.get("force", False)),
+                    limit=_int_arg(data, "limit"),
+                    subject=str(data["subject"]) if data.get("subject") else None,
+                    from_filter=str(data["from_filter"]) if data.get("from_filter") else None,
+                )
+            }
+        if command == "send":
+            body_path = _path_arg(data, "body_file")
+            return gmail.send_message(
+                to=_list_arg(data.get("to")),
+                cc=_list_arg(data.get("cc")),
+                bcc=_list_arg(data.get("bcc")),
+                subject=str(data["subject"]),
+                body_text=body_path.read_text(encoding="utf-8"),
+                body_format=_normalize_body_format(str(data["body_format"])),
+                dry_run=bool(data.get("dry_run", False)),
+            )
+        if command == "reply":
+            body_path = _path_arg(data, "body_file")
+            return gmail.reply_message(
+                gmail_id=str(data["gmail_id"]),
+                body_text=body_path.read_text(encoding="utf-8"),
+                body_format=_normalize_body_format(str(data["body_format"])),
+                to=_list_arg(data.get("to")) or None,
+                cc=_list_arg(data.get("cc")),
+                dry_run=bool(data.get("dry_run", False)),
+            )
+        if command == "archive":
+            return gmail.archive_message(str(data["gmail_id"]), dry_run=bool(data.get("dry_run", False)))
+        if command == "trash":
+            return gmail.trash_message(str(data["gmail_id"]), dry_run=bool(data.get("dry_run", False)))
+        if command == "mark-read":
+            return gmail.mark_read(str(data["gmail_id"]), dry_run=bool(data.get("dry_run", False)))
+        if command == "mark-unread":
+            return gmail.mark_unread(str(data["gmail_id"]), dry_run=bool(data.get("dry_run", False)))
+        if command == "label" and str(data["gmail_label_command"]) == "list":
+            labels = gmail.list_labels()
+            store.upsert_labels(labels)
+            return labels
+        if command == "label" and str(data["gmail_label_command"]) == "apply":
+            return gmail.apply_label(
+                str(data["gmail_id"]), str(data["label"]), dry_run=bool(data.get("dry_run", False))
+            )
+        if command == "label" and str(data["gmail_label_command"]) == "remove":
+            return gmail.remove_label(
+                str(data["gmail_id"]), str(data["label"]), dry_run=bool(data.get("dry_run", False))
+            )
+        raise RuntimeError("Unknown Gmail command")
+    finally:
+        store.close()
+
+
+def _gmail_download(gmail: GmailClient, store: MailStore, data: dict[str, object]) -> dict[str, object]:
+    labels = _resolve_labels(gmail, data.get("label"))
+    query = str(data["query"]) if data.get("query") else f"newer_than:{_int_arg(data, 'days')}d"
+    matches = gmail.search_messages(
+        query=query,
+        label_ids=labels,
+        max_results=_int_arg(data, "limit"),
+        include_spam_trash=bool(data.get("include_spam_trash", False)),
+    )
+    profile = gmail.get_profile()
+    account = str(profile.get("emailAddress") or "me")
+    downloaded: list[dict[str, object]] = []
+    skipped = 0
+    for match in matches:
+        gmail_id = match["gmail_id"]
+        if store.has_message(gmail_id):
+            skipped += 1
+            continue
+        raw_bytes, metadata = gmail.get_message_raw(gmail_id)
+        message = store.save_message(
+            account=account,
+            gmail_id=gmail_id,
+            thread_id=str(metadata.get("thread_id") or match.get("thread_id") or ""),
+            raw_bytes=raw_bytes,
+            metadata=metadata,
+        )
+        downloaded.append(_stored_message_json(message))
+    return {
+        "query": query,
+        "labels": labels,
+        "matched_count": len(matches),
+        "downloaded_count": len(downloaded),
+        "skipped_existing_count": skipped,
+        "messages": downloaded,
+    }
+
+
+def _gmail_read(store: MailStore, data: dict[str, object]) -> dict[str, object]:
+    matches = store.find_messages(
+        gmail_id=str(data["gmail_id"]) if data.get("gmail_id") else None,
+        subject=str(data["subject"]) if data.get("subject") else None,
+        from_filter=str(data["from_filter"]) if data.get("from_filter") else None,
+        limit=50,
+    )
+    if not matches:
+        return {"match_count": 0, "matches": []}
+    selected: StoredMessage | None = None
+    if data.get("gmail_id") or data.get("latest"):
+        selected = matches[0]
+    elif data.get("index") is not None:
+        index = _int_arg(data, "index")
+        if index < 0 or index >= len(matches):
+            raise ValueError(f"--index out of range: {index}")
+        selected = matches[index]
+    if selected is None:
+        return {
+            "match_count": len(matches),
+            "matches": [dict(_stored_message_json(item), index=index) for index, item in enumerate(matches)],
+            "note": "Use --latest, --index N, or --gmail-id to select a message.",
+        }
+    body = store.read_body(selected, full=bool(data.get("full", False)))
+    return {"match_count": len(matches), **body}
+
+
+def _resolve_labels(gmail: GmailClient, labels: object) -> list[str] | None:
+    if not labels:
+        return None
+    return [gmail.resolve_label_id(label) for label in _list_arg(labels)]
+
+
+def _list_arg(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    return [str(value)]
+
+
+def _int_arg(data: dict[str, object], key: str) -> int:
+    value = data[key]
+    if isinstance(value, int):
+        return value
+    return int(str(value))
+
+
+def _path_arg(data: dict[str, object], key: str) -> Path:
+    value = data[key]
+    if isinstance(value, Path):
+        return value
+    return Path(str(value))
+
+
+def _stored_message_json(message: StoredMessage) -> dict[str, object]:
+    return {
+        "gmail_id": message.gmail_id,
+        "thread_id": message.thread_id,
+        "subject": message.subject,
+        "from_addr": message.from_addr,
+        "to_addr": message.to_addr,
+        "cc_addr": message.cc_addr,
+        "date": message.date,
+        "labels": message.labels,
+        "mime_path": str(message.mime_path),
+        "downloaded_at": message.downloaded_at,
+    }
+
+
+def _normalize_body_format(value: str) -> str:
+    if value == "md":
+        return "markdown"
+    if value == "markdown":
+        return "text"
+    return value
 
 
 def main(argv: Sequence[str] | None = None) -> int:

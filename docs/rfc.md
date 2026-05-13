@@ -1,46 +1,30 @@
-# Google Docs Skill — 技术方案 RFC
+# Google Docs Skill — Architecture Decisions
 
-## 1. 概述
+## 1. Technology Choice: Direct SDK over MCP
 
-本文档记录了 Google Docs Skill 的技术选型过程、关键调研发现和最终架构决策。
+We evaluated three implementation paths for connecting AI agents to Google Docs.
 
-## 2. 技术选型：三条路线的比较
+### Option A: Pure MCP server
 
-我们评估了三种实现路径：
+Use a third-party MCP server (e.g., `taylorwilsdon/google_workspace_mcp`, currently the most mature option at ~1700 stars) as middleware. This would reduce our code to roughly 15–30 lines of glue. However, it introduces `fastmcp` (community of ~170 stars), the MCP server's own ~3000 lines of custom code, and an additional network abstraction layer — all of which expand the security attack surface.
 
-### 路线 A：纯 MCP 服务器
+### Option B: Hybrid Skill + MCP
 
-使用现有的第三方 MCP 服务器（如 `taylorwilsdon/google_workspace_mcp`）作为中间层，skill 层直接调用 MCP 暴露的工具。
+Skill file describes workflows; MCP server handles API calls. Inherits all dependency risks of Option A.
 
-调研发现，`taylorwilsdon/google_workspace_mcp` 是目前最成熟的选项（1731 stars，Python，19 个 Docs 工具 + 14 个 Drive 工具，今日仍在活跃维护）。它基于 FastMCP 3.0+ 构建，支持 OAuth 2.1、多用户、Docker 部署。
+### Option C: Direct Google SDK (chosen)
 
-优势在于开发速度极快（代码量减少约 90%），认证、重试、错误处理全部由 MCP 层封装。劣势是引入了额外的依赖链：`fastmcp`（社区较小）、MCP 服务器本身 3000+ 行自定义代码、多一层网络抽象增加攻击面。
+Use `google-api-python-client` to call Docs and Drive APIs directly. All authentication and business logic lives inside the skill. Approximately 300 lines of our own code. Dependencies limited to three Google-maintained packages (`google-api-python-client`, `google-auth`, `google-auth-oauthlib`) plus PyYAML for front matter handling.
 
-### 路线 B：Skill + MCP 混合
+**Why Option C**: Security is the primary concern. Direct SDK eliminates the `fastmcp` dependency chain and third-party server code — the attack surface shrinks to the Google-maintained SDK alone. Controllability is second: 300 lines of code we wrote is far easier to understand, debug, and modify than 3000+ lines we did not. The one-time development cost of 16–32 hours (vs. 3.5–6.5 hours for MCP) is acceptable for a tool intended for long-term use.
 
-skill 文件描述业务逻辑和工作流，底层调用 MCP 服务器的工具完成实际 API 操作。这种方式在易用性和灵活性之间取得平衡，但依然继承了 MCP 层的所有依赖风险。
+## 2. Key API Observations
 
-### 路线 C：直接调用 Google 官方 SDK（最终选择）
+### 2.1 Native Tab Support
 
-使用 `google-api-python-client` 直接调用 Google Docs API 和 Drive API，所有认证和业务逻辑在 skill 内部完成。
+Google Docs API has supported native document tabs since approximately October 2024. The relevant operations are `addDocumentTab`, `deleteTab`, and `updateDocumentTabProperties`. Content targeting uses `tabId` in the `insertText` location field. This eliminates any need to simulate tabs with heading structures — the tabs users see in the Google Docs UI are the same ones the API creates.
 
-### 决策理由
-
-最终选择**路线 C**，核心考量如下：
-
-**安全性**是首要因素。MCP 方案引入了 `fastmcp` 等第三方依赖，社区规模小（173 stars），供应链攻击面不可忽视。第三方 MCP 服务器可能缓存凭证、注入非预期逻辑。直接使用 SDK 则只依赖 Google 官方维护的三个包（`google-api-python-client`、`google-auth`、`google-auth-oauthlib`），攻击面最小。
-
-**可控性**是第二个因素。200-300 行自己写的代码，远比 3000+ 行别人的代码更容易理解、调试和维护。出现问题时可以直接查看 API 响应，无需追踪 MCP 中间层。
-
-**工作量**是可接受的代价。SDK 方案确实需要约 16-32 小时（vs MCP 的 3.5-6.5 小时），但这是一次性投入，换来的是长期的安全性和控制力。考虑到这个 skill 会长期使用，这个交换是值得的。
-
-## 3. 关键调研发现
-
-### 3.1 Google Docs API 原生支持 Tabs
-
-这是调研过程中最重要的发现。Google Docs API（约 2024 年 10 月起）已经原生支持文档内的 Tab 操作，包括创建、删除、更新、嵌套。
-
-Tab 对象结构如下：
+Tab object structure:
 
 ```json
 {
@@ -59,333 +43,235 @@ Tab 对象结构如下：
 }
 ```
 
-支持的 batchUpdate 操作：
+### 2.2 Title vs Content API Boundary
 
-- `addDocumentTab` — 创建新 tab
-- `deleteTab` — 删除 tab
-- `updateDocumentTabProperties` — 更新 tab 标题、图标等属性
+Document titles are not managed by the Docs API. They live in Drive API file metadata, modified via `files().update(fileId, body={"name": "new title"})`. The Docs API handles document content; the Drive API handles file-level metadata including name, permissions, and trashed status.
 
-向特定 tab 写入内容时，在 `insertText` 的 `location` 中指定 `tabId` 即可。读取时需在 `documents.get()` 中传入 `includeTabsContent=True`。
+### 2.3 Search via Drive API
 
-这意味着我们不需要用 Heading 模拟 tab 结构，可以使用原生的、用户在 Google Docs UI 中可直接看到和切换的 tab。
+`files().list()` with `fullText contains 'query'` searches document body, title, and description. The query syntax supports boolean operators (`and`, `or`, `not`) and metadata filters (`modifiedTime`, `mimeType`, folder `parents`). Results are paginated via `nextPageToken` (up to 100 per page). Single quotes in search terms must be escaped: `text.replace("'", "\\'")`.
 
-### 3.2 搜索能力
+Performance note: avoid `corpora='allDrives'` (may return incomplete results); prefer `modifiedTime` sorting over `createdTime` for faster responses.
 
-Drive API 的 `files().list()` 支持丰富的查询语法：
+### 2.4 Permissions Model
 
-- `fullText contains '关键词'` — 搜索文档内容（包括正文、标题、描述）
-- `name contains '文档名'` — 按标题搜索（仅匹配前缀）
-- `modifiedTime > '2024-01-01T00:00:00'` — 按修改时间筛选
-- `mimeType = 'application/vnd.google-apps.document'` — 限定文档类型
-- `'folder_id' in parents` — 限定文件夹
+Drive API permissions use roles and types:
 
-多条件用 `and` / `or` / `not` 组合。分页通过 `nextPageToken` 实现，每页最多 100 条。性能建议：避免 `corpora='allDrives'`（可能返回不完整结果），优先使用 `modifiedTime` 排序（比 `createdTime` 更快）。
+| Role | UI label | Capability |
+|------|---------|------------|
+| `reader` | Viewer | Read only |
+| `commenter` | Commenter | View and comment |
+| `writer` | Editor | Full edit |
+| `owner` | Owner | Full control (transfer requires `transferOwnership=true`) |
 
-### 3.3 分享与权限
+Permission types: `user` (by email), `group` (Google Group), `domain` (entire domain), `anyone` (public link).
 
-Drive API 的 Permissions 体系：
+Key behaviors: concurrent permission operations on the same file can conflict — use batch requests. "Anyone with link" should set `allowFileDiscovery=False` to prevent search engine indexing. Ownership transfer requires promoting to writer first, then to owner.
 
-| 角色 | 对应 UI | 说明 |
-|------|---------|------|
-| `reader` | 查看者 | 只读 |
-| `commenter` | 评论者 | 可查看和评论 |
-| `writer` | 编辑者 | 可编辑内容 |
-| `owner` | 所有者 | 完全控制，转让需 `transferOwnership=true` |
+## 3. CLI Design
 
-权限类型：`user`（指定邮箱）、`group`（Google Group）、`domain`（整个域）、`anyone`（公开链接）。
+### 3.1 Entry Point
 
-关键注意事项：
+`python -m gdocs` via `gdocs/__main__.py`. No `console_scripts` installation needed — the project is fully self-contained. This approach avoids global installation, keeps the venv structure consistent, and works immediately after `uv pip install -e .`.
 
-- 同一文件的并发权限操作可能冲突，应使用 batch request
-- "Anyone with link" 需设置 `allowFileDiscovery=False` 避免文件被搜索引擎索引
-- 转让所有权必须先添加为 writer 再升级为 owner
-- `sendNotificationEmail=False` 可抑制通知邮件
+### 3.2 Output Contract
 
-### 3.4 文档标题修改
+Every command writes a single JSON object to stdout (`ensure_ascii=False, indent=2`). Errors go to stderr as `{"error": "message", "status_code": N, "response": "..."}`. Exit code is 0 on success, 1 on error. This format is designed for AI agents and scripts — structured, predictable, and parseable.
 
-标题不属于 Docs API 管辖，而是 Drive API 的文件元数据。通过 `files().update(fileId, body={"name": "新标题"})` 实现。
+### 3.3 Subcommand Structure
 
-## 4. 架构设计
+Top-level commands for core operations (`publish`, `sync`, `create`, `delete`, `search`, `share`, `title`, `link`, `image`). Nested subcommand groups for operations that bundle related functionality: `tab` (list, add, rename, replace) and `comment` (list, reply, resolve). A global `--secrets-dir` flag allows overriding the default `secrets/` path.
 
-### 4.1 整体结构
+## 4. Idempotent Sync Design
 
-```
-adhoc_jobs/gdocs_skill/
-├── docs/
-│   ├── prd.md                  # 产品需求
-│   ├── rfc.md                  # 本文档
-│   ├── skill_google_docs.md    # AI agent 可读的 skill 文件
-│   └── working.md              # Changelog + Lessons Learned
-├── secrets/                    # OAuth 凭证（.gitignore 排除）
-│   ├── credentials.json        # OAuth 客户端凭证
-│   └── token.json              # 授权后的 token（自动生成）
-├── gdocs/                      # Python 包（可通过 python -m gdocs 调用）
-│   ├── __init__.py
-│   ├── __main__.py             # CLI 入口（argparse），sync orchestrator 在此
-│   ├── auth.py                 # OAuth 认证模块
-│   ├── client.py               # GoogleDocsClient（SDK 封装）
-│   ├── frontmatter.py          # YAML front matter 解析/序列化
-│   └── markdown.py             # Markdown → Google Docs API 转换
-├── tests/
-│   ├── unit/                   # 单元测试
-│   └── integration/            # 集成测试（真实 API）
-├── .gitignore
-├── pyproject.toml
-└── README.md
-```
+### 4.1 Problem
 
-### 4.2 核心类设计
+`publish` creates a new document every time. Real workflows involve repeatedly editing the same Markdown file and expecting changes to land on the same Google Doc. The early workaround — having the AI agent search past session history for the document ID — was fragile (not always findable) and expensive (scanning large session files).
 
-```python
-class GoogleDocsClient:
-    """单一入口，封装 Docs + Drive 两个 service"""
-    
-    def __init__(self):
-        self.creds = self._authenticate()
-        self.docs_service = build("docs", "v1", credentials=self.creds)
-        self.drive_service = build("drive", "v3", credentials=self.creds)
-    
-    # 认证
-    def _authenticate(self) -> Credentials: ...
-    
-    # 文档操作
-    def create_document(self, title, tabs=None) -> dict: ...
-    def modify_document(self, doc_id, tab_id, text) -> dict: ...
-    
-    # Tab 操作
-    def _insert_text_to_tab(self, doc_id, tab_id, text) -> None: ...
-    
-    # 搜索
-    def search_documents(self, query, folder_id=None) -> list: ...
-    
-    # 分享
-    def share_document(self, doc_id, email, role) -> dict: ...
-    def get_share_link(self, doc_id, public=False) -> str: ...
-    
-    # 元数据
-    def update_title(self, doc_id, new_title) -> dict: ...
-```
+### 4.2 Source of Truth Evaluation
 
-### 4.3 认证流程
+Three options were evaluated for storing the Markdown-to-Google-Doc mapping:
 
-```
-首次运行:
-  credentials.json → InstalledAppFlow → 浏览器授权 → token.json
+1. **Independent JSON mapping file** (e.g., `~/.gdocs/mappings.json`): breaks when files are moved or renamed; mappings disperse across repos.
+2. **Sidecar file** (e.g., `file.md.gdocs.yml`): doubles file count; easy to lose when moving the Markdown file.
+3. **YAML front matter in the Markdown file** (chosen): the binding is inseparable from the file; survives moves and renames; human-readable; git-trackable.
 
-后续运行:
-  token.json → Credentials → 检查有效性
-    → 有效：直接使用
-    → 过期：自动 refresh
-    → 无法刷新：重新走浏览器授权
-```
-
-凭证存储位置：项目目录下的 `secrets/`（已通过 `.gitignore` 排除），权限设为 `600`。
-
-### 4.4 依赖清单
-
-| 包名 | 版本 | 来源 | 用途 |
-|------|------|------|------|
-| `google-api-python-client` | latest | Google 官方 | API 客户端 |
-| `google-auth` | latest | Google 官方 | 凭证管理 |
-| `google-auth-oauthlib` | latest | Google 官方 | OAuth 2.0 流程 |
-| `pyyaml` | latest | 社区（Kirill Simonov 维护） | 解析/序列化 MD front matter |
-
-除 PyYAML 外无其他第三方运行时依赖。PyYAML 是 Python 生态最稳定的 YAML 库，用于 `sync` 命令读写 MD 文件的 front matter。
-
-### 4.5 OAuth Scope
-
-```python
-SCOPES = [
-    "https://www.googleapis.com/auth/documents",    # Docs 读写
-    "https://www.googleapis.com/auth/drive.file",    # Drive 文件级访问
-]
-```
-
-选用 `drive.file` 而非 `drive`（完整访问）是遵循最小权限原则：只能访问由本应用创建或用户主动打开的文件。
-
-## 5. Markdown → Google Docs 格式转换
-
-### 5.1 设计动机
-
-Google Docs API 的格式化操作（`updateTextStyle`、`updateParagraphStyle`、`createParagraphBullets`）需要精确的字符索引区间，手工拼装请求非常繁琐且容易出错。为了让 AI agent 能自然地用 Markdown 写入格式化内容，我们实现了一个 Markdown → Google Docs API 请求的转换层。
-
-### 5.2 支持的 Markdown 语法
-
-| Markdown 语法 | Google Docs 对应 | API 请求类型 |
-|---------------|-----------------|-------------|
-| `# 标题` | Heading 1 | `updateParagraphStyle` (HEADING_1) |
-| `## 副标题` | Heading 2 | `updateParagraphStyle` (HEADING_2) |
-| `### 小标题` | Heading 3 | `updateParagraphStyle` (HEADING_3) |
-| `**加粗**` | 加粗 | `updateTextStyle` (bold) |
-| `*斜体*` | 斜体 | `updateTextStyle` (italic) |
-| `***加粗斜体***` | 加粗+斜体 | `updateTextStyle` (bold+italic) |
-| `` `代码` `` | 等宽字体 | `updateTextStyle` (Courier New) |
-| `[文本](url)` | 超链接 | `updateTextStyle` (link) |
-| `- 项目` / `* 项目` | 无序列表 | `createParagraphBullets` |
-| `1. 项目` | 有序列表 | `createParagraphBullets` |
-| `---` / `***` / `___` | 分割线 | `updateParagraphStyle` (CENTER) + `updateTextStyle` (gray, 6pt) |
-| `> 引用文本` | 引用块 | `updateParagraphStyle` (indentStart 36pt + borderLeft gray) |
-
-不支持的语法（后续迭代）：代码块、表格、图片。
-
-### 5.3 转换架构
-
-转换分三个阶段：
-
-**Phase 1: 解析（Parse）** — 将 Markdown 文本按行解析为中间表示（Block + TextSegment）。每行根据前缀判断块类型（标题、列表、段落），然后解析行内格式（加粗、斜体、代码、链接）为 TextSegment 列表。
-
-**Phase 2: 生成纯文本（Flatten）** — 将所有 TextSegment 的纯文本拼接，剥掉 Markdown 语法符号，每个 Block 以 `\n` 结尾。
-
-**Phase 3: 生成请求（Generate）** — 遍历 Block 和 Segment，基于累计字符索引生成 Google Docs API 请求。先生成一个 `insertText` 插入全部纯文本，再生成所有格式化请求。
-
-这种"先插入再格式化"的策略避免了交叉插入导致的索引偏移问题。
-
-### 5.4 索引计算
-
-Google Docs 使用 1-based 索引。`insertText` 在 `start_index`（默认 1）处插入文本后，后续格式化请求的 `range.startIndex` 和 `range.endIndex` 基于插入后的文档状态计算。对于多 Tab 文档，所有 range 和 location 都需要包含 `tabId`。
-
-## 6. CLI 设计
-
-### 6.1 设计动机
-
-原来 AI agent 使用此 skill 时需要现场写 Python 代码（导入模块、创建 client、调用方法）。这要求 agent 正确处理 venv 激活、import 路径、credentials 目录等细节，容易出错。CLI 将所有细节封装为子命令，agent 只需执行一行 bash 命令。
-
-### 6.2 入口方式
-
-选择 `python -m gdocs` 而非安装 console_scripts，原因：不需要全局安装，项目完全自包含，和现有 venv 结构一致。
-
-### 6.3 输出规范
-
-所有输出为 JSON（`ensure_ascii=False, indent=2`），便于 AI agent 和脚本解析。错误输出到 stderr，格式为 `{"error": "message"}`，exit code 为 1。
-
-### 6.4 子命令列表
-
-| 子命令 | 用途 | 示例 |
-|--------|------|------|
-| `publish <file>` | 一次性发布 Markdown 为新 Google Doc（不回写 front matter） | `python -m gdocs publish report.md --title "报告"` |
-| `sync <file>` | 幂等同步，基于 MD front matter 做 create-or-replace | `python -m gdocs sync report.md --title "报告"` |
-| `create` | 创建空文档 | `python -m gdocs create --title "新文档"` |
-| `search <query>` | 搜索文档 | `python -m gdocs search "前线"` |
-| `share <doc_id>` | 分享文档 | `python -m gdocs share DOC_ID --email user@example.com` |
-| `title <doc_id> <title>` | 修改标题 | `python -m gdocs title DOC_ID "新标题"` |
-| `link <doc_id>` | 获取链接 | `python -m gdocs link DOC_ID --public` |
-| `tab rename` | 重命名 Tab | `python -m gdocs tab rename DOC_ID TAB_ID "新名"` |
-| `tab replace` | 替换 Tab 内容 | `python -m gdocs tab replace DOC_ID TAB_ID file.md` |
-
-## 6.5 幂等同步设计（`sync`）
-
-### 设计动机
-
-`publish` 每次都会新建 doc。实际工作流里很多 Markdown 文件会反复修改（合伙人 review、客户评审、版本迭代），需要每次更新同一个 doc，而不是产生一堆重复 doc。
-
-早期做法：AI agent 在历史 session 里搜历史命令找 Doc ID，再手动 `tab replace`。不稳定（找不到就得重新查）、费 context（grep 大量 session 文件）、无法表达"这份 MD 绑定到哪个 doc"这件事。
-
-### Source of Truth 放在哪里
-
-评估过三种方案：
-
-1. **独立 JSON mapping 文件**（如 `~/.gdocs/mappings.json`）—— 缺点：MD 移动/改名会失效；跨 repo 协作时映射分散
-2. **Sidecar 文件**（如 `file.md.gdocs.yml`）—— 缺点：文件数翻倍；移动 MD 容易漏掉 sidecar
-3. **Markdown front matter**（选中方案）—— 优点：和文件本身绑死，移动/改名不丢映射；人眼可见；git 可追踪
-
-采用 YAML front matter，和 Jekyll / Hugo 等静态站点生成器的约定一致。
-
-### Schema
+The front matter schema follows Jekyll/Hugo conventions:
 
 ```yaml
 ---
-gdoc_id: 1CLveZUmbU22YT_i5TGjhysSsxxFOM9h_r_b2-tvjMQ8
-gdoc_tab_id: t.t6qmc76tli6j   # 可选，没有就写默认 tab t.0
-gdoc_last_synced: 2026-04-23T21:31:38Z
+gdoc_id: <Google Doc ID>
+gdoc_tab_id: <tab ID, defaults to t.0>
+gdoc_last_synced: <ISO 8601 timestamp>
 ---
-
-# 正文从这里开始
 ```
 
-### CLI 行为
+### 4.3 Decision Tree
 
-`python -m gdocs sync file.md` 的决策树：
+`python -m gdocs sync file.md` resolves the target document in this priority order:
 
-1. 读文件，解析 front matter
-2. 解析 `gdoc_id` 来源优先级：`--gdoc-id` 参数 > front matter `gdoc_id` 字段
-3. 如果拿到 `gdoc_id` → 调 `replace_tab_content(doc_id, tab_id or "t.0", body, format="markdown")`
-4. 否则 → 调 `create_document(title, tabs=[{title, content: body}])`，把 `gdoc_id` 写回 front matter
-5. 每次都更新 `gdoc_last_synced`
+1. `--gdoc-id` CLI argument (explicit override)
+2. `gdoc_id` in the file's YAML front matter
+3. If neither exists → create a new document
 
-写入 Google Doc 时 body 不含 front matter（读者看到的 doc 干净）。
+If a doc ID is resolved, the tool calls `replace_tab_content()` — it reads the current document to find the tab's content range, deletes old content, and writes the new Markdown body. If no doc ID exists, it creates a new document and writes the binding back to the file's front matter. In both paths, `gdoc_last_synced` is updated to the current UTC timestamp.
 
-`--dry-run` 打印将要执行的动作但不调 API、不写文件，用于 AI agent 先 preview 再确认执行。
+`--dry-run` prints the planned action (`create` or `replace`), doc ID, and tab ID without calling any API or modifying files.
 
-### 分工：sync 是 orchestrator
+On first creation, the document body (everything after the front matter delimiter) is what gets written to Google Docs — readers see clean content without the YAML header.
 
-`_sync()` 函数在 `__main__.py` 里，不在 `client.py`。原因是 sync 涉及文件 I/O 和 front matter 读写，不属于 Google API 封装。`GoogleDocsClient` 继续保持纯 API 职责，sync 只是组合 `create_document` 和 `replace_tab_content` 两个已有方法，加上 front matter 解析/序列化层。
+### 4.4 Architecture Separation
 
-### 依赖
+The sync logic (`_sync()` function) lives in `__main__.py`, not in `GoogleDocsClient`. This separation is intentional: sync is a workflow orchestrator that combines file I/O, front matter parsing, and multiple client method calls. `GoogleDocsClient` stays purely an API wrapper. The sync function composes `create_document()` and `replace_tab_content()` — both already exist as client methods — and adds the front matter read/write layer.
 
-PyYAML 加入运行时依赖。考虑过自写 mini-parser 保持零第三方依赖，但 YAML 的细节（引号、转义、unicode、日期）自己处理容易出错，成本不划算。PyYAML 是 Python 生态最稳定的 YAML 库，`safe_load` + `safe_dump` 覆盖所有需要。
+## 5. Markdown Conversion Pipeline
 
-## 7. API 调用模式
+### 5.1 Three-Phase Architecture
 
-### 5.1 创建带 Tab 的文档
+1. **Parse**: Split Markdown text into blocks (heading, paragraph, list, table, blockquote, horizontal rule) and inline segments (bold, italic, code, link). Tables are segmented from text before block-level parsing.
+2. **Flatten**: Strip Markdown syntax to produce plain text. Each block ends with `\n`.
+3. **Generate**: Walk blocks and segments, compute cumulative character indices, and produce Google Docs API requests. A single `insertText` inserts all plain text first, then formatting requests (`updateTextStyle`, `updateParagraphStyle`, `createParagraphBullets`, `insertTable`) reference positions in the already-inserted text.
 
-分三步完成：
+The "insert first, format second" strategy avoids index-shifting bugs: all formatting requests reference stable positions in the post-insertion document.
 
-1. `documents().create()` 创建空文档
-2. `documents().batchUpdate()` 使用 `addDocumentTab` 添加 tab
-3. `documents().get(includeTabsContent=True)` 获取 tab ID
-4. `documents().batchUpdate()` 使用 `insertText` + `tabId` 填充内容
+### 5.2 Table Implementation
 
-注意：新文档自带一个默认 tab，添加新 tab 后需要根据业务需求决定是否保留或删除默认 tab。
+Content is pre-segmented into text and table segments by `_split_at_tables()`. Each segment generates its own set of API requests with independent index tracking. Segments share an `end_index` variable that carries the cumulative position forward.
 
-### 5.2 搜索文档
+`insertTable` API behavior: a table inserted at index N actually occupies positions starting at N+1 (an undocumented +1 offset). The cell position formula is `insertion_index + r*(2*C+1) + 2*c + 4`. Cell text must be inserted in reverse order (last cell first) to avoid index drift from preceding cell insertions. Empty cells are skipped (no empty text insertion).
+
+### 5.3 Limitations (by Design)
+
+No merged cells, column widths, alignment control, code blocks with syntax highlighting, or image embedding within Markdown. These are complex in the Docs API surface and not required for the primary use case (publishing narrative Markdown documents). The conversion pipeline is designed to be extended, not comprehensive.
+
+## 6. Retry and Error Handling
+
+Transient HTTP errors (429, 500, 502, 503, 504) are retried up to 4 times with exponential backoff (1s, 2s, 4s). Permanent errors (4xx other than 429) fail immediately with the full HTTP status code and response body in the error message.
+
+Document creation wraps only the initial `documents().create()` call in retry logic. Subsequent `batchUpdate()` calls are not retried because they may have non-idempotent side effects on a partially-created document. Comment listing and reply operations are fully retried since GET and reply creation are safe to repeat.
+
+Error messages include the failing action, HTTP status code, and truncated response body (capped at 1000 characters) for actionable diagnosis.
+
+## 7. OAuth Design
+
+### 7.1 Scope Selection
 
 ```python
-query = "fullText contains '关键词' and mimeType='application/vnd.google-apps.document' and trashed=false"
-drive_service.files().list(
-    q=query,
-    pageSize=10,
-    fields="files(id, name, webViewLink, modifiedTime)"
-).execute()
+SCOPES = [
+    "https://www.googleapis.com/auth/documents",   # Read/write document content
+    "https://www.googleapis.com/auth/drive.file",   # File-level access (not full Drive)
+    "https://www.googleapis.com/auth/gmail.modify", # Gmail read/send/label operations
+]
 ```
 
-搜索词中的单引号需要转义：`text.replace("'", "\\'")`。
+`drive.file` (not `drive`) is the minimum-privilege Drive choice. It restricts the app to files it created or the user explicitly opened with it. This limits the credential impact and avoids the justification burden of the full `drive` scope. Gmail uses `gmail.modify` because the implemented CLI needs to read, send, archive, trash, change labels, and update read/unread state.
 
-### 5.3 分享文档
+### 7.2 Credential Lifecycle
 
-```python
-permission = {"type": "user", "role": "writer", "emailAddress": "user@example.com"}
-drive_service.permissions().create(
-    fileId=doc_id,
-    body=permission,
-    sendNotificationEmail=True
-).execute()
+```
+First run:
+  credentials.json → InstalledAppFlow → browser authorization → token.json
+
+Subsequent runs:
+  token.json → Credentials → check validity
+    → valid: use directly
+    → expired with refresh token: auto-refresh, write updated token
+    → expired without refresh token, or refresh fails: restart browser flow
 ```
 
-获取分享链接：`drive_service.files().get(fileId=doc_id, fields="webViewLink").execute()`
+Credentials are stored in the project-local `secrets/` directory, excluded from git via `.gitignore`, with file permissions set to `600`.
 
-## 6. 风险与缓解
+### 7.3 BYO Client Model
 
-| 风险 | 影响 | 缓解措施 |
-|------|------|----------|
-| Google API 限流 | 请求被拒 | 指数退避重试，respect quota |
-| Token 过期且无法刷新 | 功能中断 | 自动重走 OAuth 流程 |
-| Tab API 行为变更 | 功能异常 | Tab 是较新功能，关注 changelog |
-| 搜索结果不完整 | 遗漏文档 | 避免 `corpora='allDrives'`，检查 `incompleteSearch` 字段 |
-| credentials.json 泄露 | 安全事故 | `.gitignore` 排除，文件权限 `600` |
+This is a public GitHub repository. It does not bundle or distribute OAuth client credentials. Each user creates their own Google Cloud project, enables the required APIs, configures the OAuth consent screen (adding themselves as a test user), and downloads their own `credentials.json`. This model keeps client secrets out of the repository, keeps each user's quota independent, and avoids the regulatory burden of a publicly distributed OAuth application.
 
-## 8. 后续迭代方向
+For Docs-only usage, OAuth setup is straightforward because `documents` and `drive.file` are sensitive scopes. Gmail scopes such as `gmail.modify` are restricted scopes. A shared pre-verified OAuth client for Gmail would require a broader Google verification process, so this project keeps the bring-your-own OAuth client model.
 
-- 扩展 Markdown 支持（代码块、表格）
-- 支持文档模板（从模板创建新文档）
-- 支持 Google Sheets 基础操作
-- 批量操作优化（一次 batchUpdate 完成多个操作）
-- 嵌套 tab 支持（子 tab）
+## 8. Gmail Integration
 
-## 9. 参考资料
+This section records the final Gmail design. The first milestone is implemented: direct Gmail SDK access, `gmail.modify` scope, local `.eml` + SQLite cache, JSON CLI output, dry-run support for mutating operations, and env-gated live tests.
+
+### 8.1 Scope Decision: `gmail.modify`
+
+The Gmail API has three relevant scope tiers:
+
+| Scope | Permits | Limitation |
+|-------|---------|------------|
+| `gmail.readonly` | Read, search, download | Cannot send or modify |
+| `gmail.send` | Send only | Cannot read or modify |
+| `gmail.modify` | Read, send, archive, trash, label, mark | Covers all implemented operations |
+
+The tool uses `gmail.modify` because one scope covers the complete first version: downloading, server-side search, sending, replying, archive, trash, label management, and read/unread state. Using narrower scopes would either block core commands or require a confusing multi-scope matrix.
+
+### 8.2 Token Reauthorization
+
+Adding `gmail.modify` after a Docs-only token has already been created requires reauthorization. The practical recovery path is to delete `secrets/token.json` and run any command, such as `python -m gdocs gmail profile`, to trigger the browser flow again. The new token then covers Docs, Drive file access, and Gmail.
+
+### 8.3 Architecture
+
+The Gmail implementation follows the same direct-SDK pattern as Docs:
+
+- `GmailClient` wraps Gmail API calls and stays separate from `GoogleDocsClient` because Gmail has different resources, permissions, and state semantics.
+- `MailStore` manages local cache state with raw `.eml` files plus SQLite metadata.
+- `__main__.py` owns CLI routing under the `gmail` subcommand group.
+
+The default cache layout is:
+
+```text
+data/mail/
+├── messages/           # Raw .eml files
+├── markdown/           # Markdown export output
+└── mail.db             # SQLite database
+```
+
+Messages are downloaded via `users.messages.get(format="raw")`, base64url decoded, and saved as `.eml` files. SQLite stores `gmail_id`, `thread_id`, headers, labels as JSON, size, downloaded timestamp, and a SHA-256 content hash. Existing messages are skipped by `gmail_id` on subsequent downloads.
+
+Markdown exports default to `data/mail/markdown/`. A custom `--output-dir` is accepted only when it stays under `data/mail/`; writing outside the mail data directory requires `--unsafe-output-dir` so private email content is not accidentally written into a git-tracked path.
+
+### 8.4 Label Semantics
+
+Gmail uses labels rather than folders. A message can have multiple labels at once, and inbox membership is represented by the `INBOX` label. Archiving removes `INBOX`; marking read removes `UNREAD`; marking unread adds `UNREAD`. User labels and system labels are resolved by name or ID before calling `users.messages.modify`.
+
+`trash` uses the dedicated `users.messages.trash` endpoint because Gmail treats trash as a recoverable state transition rather than a normal label mutation.
+
+### 8.5 Sending and Replying
+
+`send` composes a MIME message with Python's stdlib `EmailMessage` and sends it through `users.messages.send`. `reply` first fetches original message metadata, sets `In-Reply-To` and `References`, includes the original `threadId` in the API payload, and sends through the same endpoint. This keeps replies attached to the existing Gmail conversation.
+
+Both commands support `--body-format text`, `html`, `markdown`, or `md`. Markdown is treated as plain text; HTML is sent as `text/html`.
+
+### 8.6 Live Tests
+
+Gmail live tests are opt-in and never run during a normal test invocation:
+
+- `GDOCS_ENABLE_GMAIL_LIVE_TESTS=1` enables the module
+- `GDOCS_GMAIL_LIVE_ALLOW_SEND=1` enables the test that sends a real email
+- `GDOCS_GMAIL_LIVE_ALLOW_MUTATE=1` enables the archive mutation in that test
+- `GDOCS_GMAIL_LIVE_TEST_TO` optionally overrides the recipient; default is the authenticated account
+
+The tests are marked `pytest.mark.live_integration`.
+
+## 9. Risks and Mitigations
+
+| Risk | Impact | Mitigation |
+|------|--------|-----------|
+| Google API rate limiting | Requests rejected | Exponential backoff retry for transient errors; respect quota |
+| Token expiry beyond refresh | Feature interruption | Auto-trigger browser re-authorization |
+| Tab API behavior changes | Tab operations break | Monitor Google Workspace changelog; tabs are a relatively new feature |
+| Incomplete search results | Missed documents | Avoid `corpora='allDrives'`; check `incompleteSearch` response field |
+| Credential file leakage | Security incident | `.gitignore` exclusion; mode `600` on all secret files |
+| `insertTable` index behavior changes | Table rendering breaks | The undocumented +1 offset may be API version-dependent; verify on SDK upgrades |
+| Gmail restricted scope verification | Shared OAuth client becomes costly to distribute | BYO OAuth client model |
+| Local email cache leakage | Private email content exposed | `data/` gitignore entry and explicit docs warning |
+| Exported Markdown leakage | Private email bodies written outside ignored cache | Refuse output paths outside `data/mail/` unless `--unsafe-output-dir` is set |
+
+## 10. References
 
 - [Google Docs API Reference](https://developers.google.com/workspace/docs/api/reference/rest)
 - [Google Docs Tabs Guide](https://developers.google.com/workspace/docs/api/how-tos/tabs)
-- [Google Drive API v3 Permissions](https://developers.google.com/workspace/drive/api/reference/rest/v3/permissions)
-- [Google Drive Search Query Syntax](https://developers.google.com/workspace/drive/api/guides/search-files)
+- [Drive API v3 Permissions](https://developers.google.com/workspace/drive/api/reference/rest/v3/permissions)
+- [Drive Search Query Syntax](https://developers.google.com/workspace/drive/api/guides/search-files)
 - [google-api-python-client](https://github.com/googleapis/google-api-python-client)
 - [Google OAuth 2.0 Best Practices](https://developers.google.com/identity/protocols/oauth2/resources/best-practices)
+- [Gmail API Reference](https://developers.google.com/gmail/api/reference/rest)
+- [Gmail API Policy](https://developers.google.com/gmail/api/policy)
