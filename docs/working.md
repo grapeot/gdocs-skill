@@ -2,6 +2,15 @@
 
 ## Changelog
 
+### 2026-05-12 (later)
+
+- Added Google Calendar CLI commands: `create-event`, `update-event`, `delete-event`, `list-events` under `python -m gdocs calendar ...`.
+- Added `gdocs/calendar_client.py` (events.insert/patch/delete/list wrapper) and `gdocs/calendar_commands.py` (CLI dispatcher).
+- Expanded OAuth scopes with `https://www.googleapis.com/auth/calendar.events`.
+- Hardened `auth.get_credentials`: it now compares the stored token's scopes against `SCOPES` and discards the cached token when any required scope is missing. Previously, adding a scope produced an opaque auth error on first use; now the OAuth browser flow opens automatically.
+- Added unit tests for the calendar client and CLI dispatcher, plus a gated integration test (`tests/integration/test_calendar_live.py`).
+- 136 unit tests pass.
+
 ### 2026-05-12
 
 - Implemented Gmail integration: download, server-side search, local read/export, send, reply, archive, trash, read/unread state, and label management.
