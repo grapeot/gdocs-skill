@@ -1,5 +1,12 @@
 # Gmail Integration Design
 
+**Status: implemented.** The final implementation lives in the PRD and RFC:
+
+- Feature behavior: [`docs/prd.md`](prd.md#gmail-integration)
+- Architecture and decisions: [`docs/rfc.md`](rfc.md#8-gmail-integration)
+
+This file is retained as the original design note. The only material change from the initial sketch is `gmail export-md`: the implemented command exports from the local cache with `--limit`, `--subject`, `--from`, `--output-dir`, `--unsafe-output-dir`, and `--force` rather than re-querying Gmail with `--days` and `--label`.
+
 ## 背景
 
 GDocs skill 现在通过 Google 官方 SDK 操作 Docs 和 Drive。OAuth scope 只有：
@@ -142,11 +149,13 @@ Desktop OAuth client 还涉及 client secret。Google policy 不建议把 OAuth 
 
 ## Open Questions
 
-第一，是否接受 `gmail.modify` 作为第一期 scope。如果只做发送，`gmail.send` 足够；如果要 archive 和 label，`gmail.modify` 更直接。
+All three questions are resolved in the implementation and reflected in the PRD/RFC.
 
-第二，邮件缓存是否和 Outlook skill 保持完全一致的目录结构。为了 agent 复用搜索习惯，建议保持 `data/mail/messages/` 和 `data/mail/markdown/`。
+第一，第一期接受 `gmail.modify` 作为 scope，因为已实现下载、发送、回复、archive、trash、label 和读未读状态。
 
-第三，是否要把项目对外定位从 Google Docs Skill 扩成 Google Workspace Skill。建议暂时不改名，只在 README 里注明 Gmail 是新增能力。等 Gmail、Calendar、Sheets 都进入后，再考虑改名。
+第二，邮件缓存采用 `data/mail/messages/`、`data/mail/markdown/` 和 `data/mail/mail.db`，与 Outlook-style 本地归档习惯保持一致。
+
+第三，项目暂时仍叫 Google Docs Skill，只在 README、PRD、RFC 和 skill file 中注明 Gmail 是新增能力。等 Calendar、Sheets 等更多 Workspace 能力进入后，再考虑改名。
 
 ## References
 

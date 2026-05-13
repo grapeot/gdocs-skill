@@ -1,124 +1,165 @@
-# Google Docs Skill — 产品需求文档
+# Google Docs Skill — Feature Reference
 
-## 1. 背景与动机
+## Purpose
 
-我们的 AI 工作流（OhMyClaude Code / knowledge_working）中缺少直接操控 Google Docs 的能力。目前如果需要生成、修改或分享 Google Docs，只能手动完成。这个 skill 旨在让 AI agent 能够直接通过 Google 官方 API 完成文档的全生命周期操作。
+This CLI tool enables AI agents and scripts to operate on Google Docs and Gmail through the official Google Python SDK. Every operation produces JSON output for programmatic consumption. The tool is designed for consumption by AI agents within a workspace, but works equally well from any terminal.
 
-## 2. 用户场景
+## Document Lifecycle
 
-### 场景 1：创建带 Tab 结构的文档
+**Create** — Produce a new Google Doc with optional tab structures and Markdown-formatted content.
 
-用户说："帮我创建一个项目报告，包含三个 tab：执行摘要、数据分析、下一步计划。"
+**Delete** — Move to trash (default, recoverable for 30 days) or permanently remove. Intended for cleaning up test and scaffold documents.
 
-AI agent 自动创建一个 Google Docs 文档，内含三个原生 tab（非 heading 模拟），每个 tab 有独立的标题和内容区域，并返回可访问的文档链接。
+**Update title** — Rename the Google Doc via Drive metadata (not Docs content API).
 
-### 场景 2：搜索并修改文档
+**Search** — Full-text search across accessible documents via Drive API. Returns doc ID, title, link, and modification time. Search scope is limited to files the app created or the user explicitly opened with it, due to the `drive.file` scope.
 
-用户说："找到所有包含 'API 集成' 的文档，把状态更新为已完成。"
+## Markdown Publishing
 
-AI agent 通过 Drive API 全文搜索匹配的文档，展示搜索结果供用户确认，然后对选中的文档执行内容修改。
+Markdown content is converted to Google Docs native formatting through a three-phase pipeline: parse (identify blocks and inline segments), flatten (strip markup to plain text), and generate (produce API formatting requests).
 
-### 场景 3：分享文档
+Supported Markdown to Google Docs mappings:
 
-用户说："把这个文档分享给 alice@example.com，让她作为 editor。"
+| Markdown | Google Docs rendering |
+|----------|----------------------|
+| `# Heading` | Heading 1 |
+| `## Heading` | Heading 2 |
+| `### Heading` | Heading 3 |
+| `**bold**` | Bold |
+| `*italic*` | Italic |
+| `***bold italic***` | Bold + Italic |
+| `` `code` `` | Courier New monospace |
+| `[text](url)` | Hyperlink |
+| `- item` / `* item` | Unordered list |
+| `1. item` | Ordered list |
+| `---` / `***` / `___` | Horizontal rule (gray centered line, 30× ━) |
+| `> quote` | Blockquote (left indent 36pt + gray left border) |
+| `| col \| col \|` | Native table (header row bolded) |
 
-AI agent 调用 Drive Permissions API，将指定用户添加为编辑者，可选是否发送通知邮件，并返回分享链接。
+Internet links and inline code are supported within all block types. Unsupported by design: code blocks with syntax highlighting, merged table cells, column widths, alignment control, and images embedded within Markdown. Images must be inserted as a separate step.
 
-### 场景 4：修改文档标题
+## Idempotent Sync
 
-用户说："把这个文档的标题改成 Q4 财报终稿。"
+The `sync` command solves the problem of repeatedly updating the same Markdown file and needing changes reflected in the same Google Doc. Without sync, each `publish` creates a new document, and finding the right document to update requires searching through past sessions.
 
-AI agent 通过 Drive API 更新文档元数据中的 name 字段。
+**Design**: The Markdown file carries its own Google Doc binding via YAML front matter:
 
-### 场景 5：获取分享链接
+```yaml
+---
+gdoc_id: <Google Doc ID>
+gdoc_tab_id: <tab ID, defaults to t.0>
+gdoc_last_synced: <ISO 8601 timestamp>
+---
 
-用户说："把这个文档的分享链接给我。"
+# Document body
+```
 
-AI agent 获取文档的 `webViewLink`，如果需要还可以将文档设置为"任何拥有链接的人可查看"模式。
+This means the binding stays with the file — moving or renaming it preserves the mapping. The mapping is git-trackable and human-readable. The document body (everything after the front matter) is what gets written to Google Docs, so readers see clean content.
 
-### 场景 6：用 Markdown 写入带格式的内容
+**Behavior**: `python -m gdocs sync file.md` resolves the target document by checking, in order: the `--gdoc-id` CLI argument, the file's front matter `gdoc_id` field, or neither (triggers creation). If a doc ID is found, the tool replaces the relevant tab's content. If not, it creates a new document and writes the ID back to the file's front matter. The `--dry-run` flag previews what would happen without side effects.
 
-用户说："帮我创建一个文档，标题叫'周报'，内容用 Markdown 写。"
+See [docs/rfc.md](rfc.md) for the full decision tree and architecture rationale.
 
-AI agent 接收 Markdown 格式的文本，自动转换为 Google Docs 原生格式（标题、加粗、斜体、列表、超链接、行内代码等），写入文档。支持在创建文档和修改文档时使用。
+## Tab Management
 
-### 场景 7：通过 CLI 一键发布 Markdown 到 Google Docs
+Google Docs supports native document tabs since approximately October 2024. This tool works with real tabs, not heading-based simulations. Supported operations:
 
-用户说："把 `report.md` 发到 Google Docs。"
+- List all tabs in a document (ID and title)
+- Add a new tab, optionally with content from a file
+- Rename a tab
+- Replace a tab's entire content from a file
 
-AI agent 执行 `python -m gdocs publish report.md --title "报告"`，一行命令完成 Markdown 文件到 Google Docs 的发布。所有输出为 JSON 格式，方便程序化处理。CLI 封装了认证、格式转换、API 调用的全部细节。
+## Sharing
 
-### 场景 8：幂等地同步 Markdown 到 Google Docs（MD 即 source of truth）
+Share documents with specific users via email address. Supported roles: `reader` (view only), `commenter` (view and comment), `writer` (full edit). An optional notification message can be included.
 
-用户说："我改了 `outline_v1.md`，同步到 Google Docs。"
+Generate public "anyone with the link" access by setting `--public` on the `link` command. Public links set `allowFileDiscovery=False` to prevent search engine indexing.
 
-问题背景：`publish` 每次都会新建 doc，不能处理"同一份 MD 持续更新到同一个 doc"的场景。历史做法是让 AI agent 翻过去的会话找 Doc ID 再手动 `tab replace`，不稳定且费 context。
+## Comments
 
-解决方案：`python -m gdocs sync file.md` 读取文件开头的 YAML front matter，从里面拿 `gdoc_id` 和 `gdoc_tab_id`；有就 tab replace，没有就 create 并把 ID 写回 front matter。MD 文件因此成为自己的 source of truth——文件走到哪、Doc 映射跟到哪。
+Read and manage document comments via Drive API v3:
 
-首次绑定到已有 Doc：`python -m gdocs sync file.md --gdoc-id ID --tab-id t.xxx`，CLI 把两个 ID 写进 front matter，之后不用再传。
+- List all comments (with optional filter for unresolved only)
+- Reply to a comment
+- Resolve a comment (mark it as closed)
 
-## 3. 功能范围
+Each comment entry includes author, content, the quoted text it references, creation time, resolution status, and any replies.
 
-### 第一期（MVP）
+## Image Insertion
 
-| 功能 | 优先级 | 说明 |
-|------|--------|------|
-| 创建文档 | P0 | 支持纯文本和带 Tab 结构的文档 |
-| Tab 管理 | P0 | 创建多个 tab，指定标题、图标、内容 |
-| Markdown 格式支持 | P0 | 内容支持 Markdown 语法，自动转换为 Google Docs 原生格式（标题、加粗、斜体、列表、链接、行内代码、分割线、引用块等） |
-| Tab 管理（重命名/替换内容） | P0 | 重命名 Tab 标题、替换 Tab 内容（清空+写入，支持 Markdown） |
-| CLI 入口 | P0 | `python -m gdocs` 子命令，所有功能可通过命令行调用，JSON 输出 |
-| 搜索文档 | P0 | 按关键词全文搜索，支持按文件夹筛选 |
-| 修改文档内容 | P0 | 向指定 tab 插入/替换文本 |
-| 修改文档标题 | P1 | 通过 Drive API 更新 name 字段 |
-| 分享文档 | P1 | 添加用户权限（reader/writer/commenter） |
-| 获取分享链接 | P1 | 返回 webViewLink，可设置公开访问 |
-| 幂等同步（sync） | P0 | 基于 MD front matter 的 create-or-replace。MD 文件持有自己的 doc id/tab id 映射 |
+Insert local images (PNG, JPEG, GIF) into a document at a specific character index, or appended to the end of a tab. Images are uploaded to Google Drive and made publicly readable for inline display within the document. Width defaults to 468 points (full width of a standard Google Doc body). When inserting images with Markdown content that references them (e.g., `![alt](path.png)`), insert images after publishing the Markdown, working from bottom to top of the document to avoid index drift from each insertion.
 
-### 不做（Out of Scope）
+## Gmail Integration
 
-| 功能 | 原因 |
-|------|------|
-| 删除文档 | 风险太高，手动操作更安全 |
-| 复杂格式排版 | 表格、图片等后续迭代（常见 Markdown 格式已支持，含分割线和引用） |
-| Google Sheets / Slides | 不在本 skill 范围 |
-| 多用户 session 管理 | MVP 只支持单用户 |
+**Implementation status**: Complete for the first Gmail milestone described in [`docs/gmail_integration.md`](gmail_integration.md). The implemented surface covers download, search, local list/read/export, send, reply, archive, trash, read/unread state, and label operations.
 
-## 4. 非功能需求
+The Gmail pipeline covers server-side search, local download, local read/export, sending, replying, and message state changes. Gmail commands are grouped under `python -m gdocs gmail ...`. Mutating operations support `--dry-run` where a preview is useful.
 
-### 安全性
+| Command | Description |
+|---------|-------------|
+| `gmail profile` | Show authenticated Gmail address and mailbox stats |
+| `gmail download` | Search Gmail and download raw `.eml` to local cache |
+| `gmail search` | Server-side search with native Gmail query syntax |
+| `gmail list-local` | List messages in the local SQLite cache |
+| `gmail read` | Read a cached message body, truncated at 10,000 chars unless `--full` is used |
+| `gmail export-md` | Export cached messages as Markdown files with YAML front matter |
+| `gmail send` | Send an email via the Gmail API |
+| `gmail reply` | Reply to an existing thread using `In-Reply-To`, `References`, and Gmail `threadId` |
+| `gmail archive` | Remove the `INBOX` label |
+| `gmail trash` | Move a message to Gmail Trash |
+| `gmail mark-read` | Remove the `UNREAD` label |
+| `gmail mark-unread` | Add the `UNREAD` label |
+| `gmail label list` | List system and user-defined labels |
+| `gmail label apply` | Add a label to a message |
+| `gmail label remove` | Remove a label from a message |
 
-- 所有凭证本地存储（`~/.google_docs_skill/`），不进入版本控制
-- 只使用 Google 官方 SDK，零第三方运行时依赖
-- OAuth token 自动刷新，过期自动重新认证
-- 最小权限原则：仅申请 `documents` 和 `drive.file` 两个 scope
+Downloaded messages are stored under `data/mail/` by default:
 
-### 可靠性
+```text
+data/mail/
+├── messages/          # Raw .eml files
+├── markdown/          # Markdown exports
+└── mail.db            # SQLite metadata index
+```
 
-- 所有 API 调用包含错误处理（`HttpError` 捕获）
-- Token 过期自动刷新，无需用户干预
-- 搜索结果支持分页，防止大量结果导致超时
+The SQLite index supports local filtering by Gmail ID, subject, and sender. Raw `.eml` files preserve MIME content. Messages are deduplicated by `gmail_id` during download. The global `--mail-data-dir` flag overrides the cache location. Markdown exports default to `data/mail/markdown/`; export paths outside `data/mail/` require `--unsafe-output-dir` because they contain private email bodies.
 
-### 易用性
+Gmail uses labels rather than folders. Archive removes the `INBOX` label rather than moving the message. User labels and system labels such as `INBOX`, `UNREAD`, `STARRED`, `IMPORTANT`, `SENT`, `DRAFT`, `TRASH`, `SPAM`, and `CATEGORY_*` can be resolved by name or ID.
 
-- 首次使用自动触发 OAuth 授权流程（浏览器弹窗）
-- 授权后 token 持久化，后续使用无感知
-- Skill 文档提供完整的使用示例
+## Output Contract
 
-## 5. 前置条件
+All commands write a single JSON object to stdout on success. On error, a JSON error object is written to stderr:
 
-用户需要完成以下一次性配置：
+```json
+{
+  "error": "Failed to create document 'Title': HTTP 503 — <response body>",
+  "status_code": 503,
+  "response": "<API response body or null>"
+}
+```
 
-1. 在 Google Cloud Console 创建项目
-2. 启用 Google Docs API 和 Google Drive API
-3. 创建 OAuth 2.0 客户端凭证（Desktop app 类型）
-4. 下载 `credentials.json` 到 `~/.google_docs_skill/`
-5. 首次运行时在浏览器中完成授权
+Exit code is 0 on success, 1 on error. Transient API errors (HTTP 429 and 5xx) are retried up to 4 times with exponential backoff (1s, 2s, 4s) before surfacing the error.
 
-## 6. 成功指标
+## Architecture
 
-- AI agent 能在 30 秒内完成文档创建（含 tab）
-- 搜索结果准确返回包含目标关键词的文档
-- 分享操作成功后，目标用户能立即访问文档
-- 整个 skill 核心代码量控制在 500 行以内（含 CLI 入口）
+```text
+gdocs/
+├── __main__.py      # CLI entry point: argparse, subcommand routing, sync orchestrator
+├── client.py        # GoogleDocsClient — wraps Docs and Drive APIs
+├── gmail_client.py  # GmailClient — wraps Gmail API
+├── mail_store.py    # MailStore — SQLite + .eml local cache
+├── auth.py          # OAuth credential management for Docs, Drive, and Gmail scopes
+├── markdown.py      # Markdown to Google Docs API request translator (3-phase pipeline)
+└── frontmatter.py   # YAML front matter parse/serialize for sync
+```
+
+`GoogleDocsClient` and `GmailClient` are the API wrapper classes, initialized once per CLI invocation with a secrets directory. CLI command handlers instantiate the relevant client and route to the appropriate method. `MailStore` handles local persistence for Gmail. No state is shared between invocations beyond filesystem-stored credentials and the optional Gmail cache. Sync orchestration lives in `__main__.py` (not in `client.py`) to keep API wrapping and workflow logic separate.
+
+## Out of Scope
+
+- Google Sheets, Slides, or Calendar
+- Multi-user session management
+- Merged table cells or column width control
+- Code blocks with syntax highlighting
+- Image embedding within Markdown content
+- Document templates
