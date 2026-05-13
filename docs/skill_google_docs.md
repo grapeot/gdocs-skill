@@ -1,294 +1,268 @@
-# Skill: Google Docs 操作
+# Skill: Google Docs
 
-通过 CLI 命令操控 Google Docs：同步 Markdown 文件、创建文档、搜索、修改、分享、Tab 管理。
+CLI tool for operating on Google Docs and Gmail via the official Python SDK. All output is JSON — designed for AI agent consumption.
+
+- **Type**: API Guide
+- **Project**: `adhoc_jobs/gdocs_skill/`
+- **Updated**: 2026-05-12
 
 ## When to Use
 
-用户说出以下意图时触发：
-- "帮我创建一个 Google Doc"
-- "把这个 Markdown 发到 Google Docs"
-- "这份 MD 改了，更新到 Google Docs" / "重新同步一下" → 优先用 `sync`
-- "搜索我的 Google Docs"
-- "把这个文档分享给 xxx"
-- "修改那个文档的标题 / 内容"
-- "这个文档上有什么 comments"、"看看评论"
-- 任何涉及 Google Docs 创建、搜索、修改、分享、评论的需求
+The user says anything implying a Google Docs operation:
+
+- "Create a Google Doc" / "Publish this to Google Docs"
+- "Update the doc" / "Re-sync" / "Push changes to the doc"
+- "Search my docs for ..." / "Find the document about ..."
+- "Share this with ..." / "Get me a link"
+- "What comments are on ..." / "Reply to that comment" / "Resolve it"
+- "Add a tab" / "Rename the tab" / "Add an image to the doc"
+- "Download recent email" / "Search Gmail for ..." / "Read this email"
+- "Send an email" / "Reply to this thread"
+- "Archive this message" / "Mark as read" / "Apply this Gmail label"
+
+**Default to `sync` over `publish`** when the Markdown file will be edited repeatedly. `publish` always creates a new document; `sync` binds the file to a specific doc via front matter.
+
+## Activation
+
+Every command requires these two lines first:
+
+```bash
+cd /path/to/gdocs-skill
+source .venv/bin/activate
+```
+
+## Success Criteria
+
+A command succeeded when:
+- Exit code is 0 (1 means error — check stderr)
+- stdout contains a valid JSON object (not empty, not an error string)
+- For create/publish/sync: output contains `id` and `link` fields
+- For search: output is a JSON array
+- For all others: output contains `"success": true` or the documented fields
+
+If any of these fail, the command did not succeed. Do not assume success without checking exit code.
 
 ## Prerequisites
 
-- 项目位置：`adhoc_jobs/gdocs_skill/`
-- Python venv：`adhoc_jobs/gdocs_skill/.venv/`（用 `uv` 创建）
-- OAuth 凭证：`adhoc_jobs/gdocs_skill/secrets/credentials.json` 必须存在
-- 首次使用需完成 OAuth 授权（浏览器弹窗），详见项目 `README.md`
+`secrets/credentials.json` must exist. If missing, guide the user through OAuth setup (steps in the repo `README.md`). On first run, a browser opens for Google authorization; after that, `secrets/token.json` persists the session.
 
-## 调用方式
+Gmail commands require the `https://www.googleapis.com/auth/gmail.modify` scope. If the user authorized this tool before Gmail support existed, delete `secrets/token.json` and run `python -m gdocs gmail profile` to reauthorize. One token then covers Docs, Drive file access, and Gmail.
 
-所有命令在项目目录下通过 `python -m gdocs` 调用，输出均为 JSON。
+## CLI Reference
 
-```bash
-cd /path/to/knowledge_working/adhoc_jobs/gdocs_skill && source .venv/bin/activate
-```
+All commands output JSON to stdout, errors to stderr. Global flag: `--secrets-dir PATH` (default: `secrets/`).
 
-## 常见场景
-
-### 场景 0：幂等同步 Markdown（最常见，优先用）
-
-**当 MD 文件会被反复修改、需要持续更新到同一个 Google Doc 时，用 `sync` 而不是 `publish`。**
-
-`sync` 基于 MD 文件开头的 YAML front matter 记录 doc 绑定：
-
-```yaml
----
-gdoc_id: 1CLveZUmbU22YT_i5TGjhysSsxxFOM9h_r_b2-tvjMQ8
-gdoc_tab_id: t.t6qmc76tli6j   # 可选，没有就写默认 tab t.0
-gdoc_last_synced: 2026-04-23T21:31:38Z
----
-
-# 正文从这里开始
-```
-
-三种用法：
+### Document Commands
 
 ```bash
-# 1) 首次 sync（还没有 doc）— 创建新 doc，把 doc_id 写回 front matter
-python -m gdocs sync report.md --title "报告"
+# Publish Markdown as a new Google Doc (one-shot, always creates)
+python -m gdocs publish file.md --title "Title"
+python -m gdocs publish file.md --title "Title" --share user@example.com --role writer
+# Output: {"id": "...", "link": "https://docs.google.com/document/d/..."}
 
-# 2) 已有 front matter — 自动 tab replace，更新 gdoc_last_synced
-python -m gdocs sync report.md
+# Idempotent sync: bind Markdown file to a Google Doc via YAML front matter
+python -m gdocs sync file.md --title "Title"          # First sync — creates doc
+python -m gdocs sync file.md                           # Subsequent — updates bound doc
+python -m gdocs sync file.md --gdoc-id ID --tab-id t.x # Bind to existing doc+tab
+python -m gdocs sync file.md --dry-run                 # Preview without side effects
+# Create output: {"action": "create", "doc_id": "...", "link": "...", "front_matter_updated": true}
+# Replace output: {"action": "replace", "doc_id": "...", "tab_id": "...", "link": "...", "front_matter_updated": true}
+# Dry-run output: {"dry_run": true, "action": "create|replace", ...}
 
-# 3) 绑定到已有 doc 的特定 tab — 把两个 id 写进 front matter，同时更新 tab 内容
-python -m gdocs sync report.md --gdoc-id DOC_ID --tab-id t.xxx
-```
+# Create empty document
+python -m gdocs create --title "Title"
+# Output: {"id": "...", "link": "..."}
 
-`--dry-run` 打印将要执行的动作（action: create / replace + doc_id + tab_id），不调 API、不写文件。面对已绑定的 MD 时先 dry-run 确认目标是对的，再执行。
+# Delete (trash by default — recoverable 30 days)
+python -m gdocs delete DOC_ID
+python -m gdocs delete DOC_ID --permanent
 
-**sync 的好处**：
-- 幂等——MD 文件持有自己的 doc 映射，AI agent 不需要翻历史找 ID
-- source of truth 跟着 MD 走——移动/改名文件不会丢映射
-- 不会产生重复 doc
+# Search accessible docs
+python -m gdocs search "keyword"
+python -m gdocs search "keyword" --max-results 20
+# Output: [{"id", "name", "link", "modifiedTime"}, ...]
 
-**何时用 publish 而不是 sync**：
-- 一次性 throwaway 文档（不打算后续更新）
-- 不想在 MD 里出现 front matter
+# Share with a user
+python -m gdocs share DOC_ID --email user@example.com
+python -m gdocs share DOC_ID --email user@example.com --role reader
+python -m gdocs share DOC_ID --email user@example.com --role commenter --message "Please review"
+# Output: {"success": true, "link": "..."}
 
-### 场景 1：把一个 Markdown 文件一次性发布到 Google Docs（不回写 front matter）
-
-```bash
-python -m gdocs publish path/to/report.md --title "AI 前线 2026-03-08"
-```
-
-发布后立刻分享给某人：
-
-```bash
-python -m gdocs publish path/to/report.md --title "报告" --share someone@example.com --role writer
-```
-
-### 场景 2：Tab 管理
-
-列出文档所有 Tab：
-
-```bash
-python -m gdocs tab list DOC_ID
-```
-
-给文档添加新 Tab：
-
-```bash
-python -m gdocs tab add DOC_ID "Tab标题"
-python -m gdocs tab add DOC_ID "Tab标题" path/to/content.md --format markdown
-```
-
-更新已有 Tab 的内容（清空后重写）：
-
-```bash
-python -m gdocs tab replace DOC_ID TAB_ID path/to/updated.md
-```
-
-默认使用 markdown 格式。如需纯文本：
-
-```bash
-python -m gdocs tab replace DOC_ID TAB_ID file.txt --format plain
-```
-
-重命名 Tab：
-
-```bash
-python -m gdocs tab rename DOC_ID TAB_ID "新标题"
-```
-
-### 场景 3：创建空文档
-
-```bash
-python -m gdocs create --title "新文档"
-```
-
-### 场景 4：搜索文档
-
-```bash
-python -m gdocs search "关键词"
-python -m gdocs search "关键词" --max-results 20
-```
-
-### 场景 5：分享文档
-
-```bash
-python -m gdocs share DOC_ID --email user@example.com --role writer
-python -m gdocs share DOC_ID --email user@example.com --role reader --message "请查看"
-```
-
-### 场景 6.5：删除文档（清理 test / 废 docs）
-
-```bash
-python -m gdocs delete DOC_ID                # 移到回收站（默认，30 天可恢复）
-python -m gdocs delete DOC_ID --permanent    # 立即永久删除（不可恢复）
-```
-
-**何时用**：
-- 调试 publish / create 失败留下的 test docs
-- 一次操作产生多份重复 doc（参见 §故障排查）
-- Sub-agent 跑测试自动产生的 scaffold doc
-
-**纪律**：每次 create / publish 之前，先想清楚是否会留下不需要的 doc。如果是 debug 用 doc，**用完立即 delete**，不要留在用户的 Drive 里污染。Default trash 模式让你后悔有 30 天反悔窗口。
-
-### 场景 6：修改标题 / 获取链接
-
-```bash
-python -m gdocs title DOC_ID "新标题"
+# Rename / get link
+python -m gdocs title DOC_ID "New Title"
 python -m gdocs link DOC_ID
 python -m gdocs link DOC_ID --public
 ```
 
-## 支持的 Markdown 格式
-
-| 语法 | 效果 |
-|------|------|
-| `# 标题` | Heading 1 |
-| `## 标题` | Heading 2 |
-| `### 标题` | Heading 3 |
-| `**加粗**` | 加粗 |
-| `*斜体*` | 斜体 |
-| `***加粗斜体***` | 加粗+斜体 |
-| `` `代码` `` | 等宽字体 (Courier New) |
-| `[文本](url)` | 超链接 |
-| `- 项目` | 无序列表 |
-| `1. 项目` | 有序列表 |
-| `---` | 分割线（灰色居中线） |
-| `> 引用文本` | 引用块（左缩进 + 左边框） |
-| `\| col \| col \|` | 原生表格（表头自动加粗） |
-
-### 场景 7：查看文档上的评论
-
-列出所有 comments（包括已解决的）：
+### Tab Commands
 
 ```bash
-python -m gdocs comment list DOC_ID
+python -m gdocs tab list DOC_ID               # List all tabs
+python -m gdocs tab add DOC_ID "Title"        # Add empty tab
+python -m gdocs tab add DOC_ID "Title" file.md # Add tab with content
+python -m gdocs tab rename DOC_ID TAB_ID "New" # Rename a tab
+python -m gdocs tab replace DOC_ID TAB_ID file.md  # Replace tab content (default markdown)
+python -m gdocs tab replace DOC_ID TAB_ID file.txt --format plain
 ```
 
-只看未解决的 comments：
+### Comment Commands
 
 ```bash
-python -m gdocs comment list DOC_ID --unresolved-only
-```
+python -m gdocs comment list DOC_ID                      # All comments
+python -m gdocs comment list DOC_ID --unresolved-only     # Only unresolved
+# Output: [{id, author, content, quoted_text, created_time, resolved, replies}, ...]
 
-输出 JSON 数组，每个 comment 包含 `id`、`author`、`content`、`quoted_text`（引用的原文片段）、`created_time`、`resolved`、`replies`。
+python -m gdocs comment reply DOC_ID COMMENT_ID "Reply text"
+# Output: {id, author, content, created_time}
 
-回复评论：
-
-```bash
-python -m gdocs comment reply DOC_ID COMMENT_ID "回复内容"
-```
-
-解决评论（标记为已解决）：
-
-```bash
 python -m gdocs comment resolve DOC_ID COMMENT_ID
+# Output: {id, resolved: ...}
 ```
 
-### 场景 8：在文档中插入本地图片
+### Image Command
 
 ```bash
-python -m gdocs image DOC_ID path/to/image.png --width 468
+python -m gdocs image DOC_ID chart.png
+python -m gdocs image DOC_ID chart.png --width 468 --index 2050 --tab-id t.abc
+# Output: {"success": true, "doc_id": "...", "drive_file_id": "...", "index": N}
 ```
 
-默认插入到文档末尾。指定位置插入（需要知道字符 index）：
+- Image is uploaded to Drive and made publicly readable for inline display
+- `--width` defaults to 468pt (full body width)
+- Without `--index`, appends to end of doc (or specified tab)
+
+When inserting images that correspond to `![alt](path.png)` in a Markdown file: publish the Markdown first (alt text becomes plain text), then scan the doc for the alt text positions, and insert images from bottom to top to avoid index drift.
+
+### Gmail Commands
+
+All Gmail commands live under `python -m gdocs gmail ...`. Server-side searches use native Gmail query syntax (`from:`, `subject:`, `newer_than:`, `is:unread`, `label:`, etc.). Local reads use the SQLite + `.eml` cache under `data/mail/` unless `--mail-data-dir` overrides it.
 
 ```bash
-python -m gdocs image DOC_ID image.png --index 2050 --width 468
+# Profile
+python -m gdocs gmail profile
+# Output: {"emailAddress": "...", "messagesTotal": N, "threadsTotal": N}
+
+# Download recent messages to local cache
+python -m gdocs gmail download
+python -m gdocs gmail download --days 14 --limit 100 --label INBOX
+python -m gdocs gmail download --query "from:user@example.com" --include-spam-trash
+
+# Search Gmail server-side
+python -m gdocs gmail search "subject:meeting newer_than:7d"
+python -m gdocs gmail search "is:unread" --limit 50
+# Output: [{"gmail_id": "...", "thread_id": "..."}, ...]
+
+# List and read locally cached messages
+python -m gdocs gmail list-local --limit 10
+python -m gdocs gmail read --latest
+python -m gdocs gmail read --index 0 --full
+python -m gdocs gmail read --gmail-id MSG_ID
+
+# Export cached messages as Markdown
+python -m gdocs gmail export-md --limit 50
+python -m gdocs gmail export-md --subject "budget" --force
+python -m gdocs gmail export-md --output-dir data/mail/custom_exports
+
+# Send and reply. Use --dry-run before real sends.
+python -m gdocs gmail send --to user@example.com --subject "Hello" --body-file body.md --dry-run
+python -m gdocs gmail send --to user@example.com --cc reviewer@example.com --subject "Status" --body-file report.html --body-format html
+python -m gdocs gmail reply --gmail-id MSG_ID --body-file reply.md --dry-run
+
+# Message state
+python -m gdocs gmail archive GMAIL_ID
+python -m gdocs gmail trash GMAIL_ID --dry-run
+python -m gdocs gmail mark-read GMAIL_ID
+python -m gdocs gmail mark-unread GMAIL_ID
+
+# Labels
+python -m gdocs gmail label list
+python -m gdocs gmail label apply GMAIL_ID --label "Important"
+python -m gdocs gmail label remove GMAIL_ID --label INBOX
 ```
 
-`--width 468` 是全宽。图片会先上传到 Google Drive 再插入文档。
+Key semantics:
+- `archive` removes the `INBOX` label. Gmail does not have an Archive folder.
+- `trash` calls Gmail's recoverable trash endpoint.
+- `label` accepts system label names (`INBOX`, `UNREAD`, `STARRED`, etc.), raw label IDs, or user label names.
+- `--body-format` accepts `text`, `html`, `markdown`, or `md`. Markdown is sent as plain text.
+- `--dry-run` is available on Gmail send, reply, archive, trash, mark-read, mark-unread, label apply, and label remove.
+- `export-md --output-dir` refuses paths outside `data/mail/` unless `--unsafe-output-dir` is set. Treat exported Markdown as private email data.
 
-**带图片的 Markdown 发布流程**：Markdown 中的 `![alt](local_path.png)` 不会自动变成图片，publish 后 alt text 会保留为纯文本（如 `!Monthly Revenue by Course`）。正确做法：
+## Front Matter Contract (sync)
 
-1. 先 publish markdown（图片占位符变成 alt text）
-2. 用 Google Docs API 扫描文档找到 alt text 的 index
-3. 从文档底部往顶部逐个 `gdocs image --index` 插入（从底部开始是为了避免 index 偏移）
+`sync` reads and writes YAML front matter in the Markdown file:
 
-批量插入示例（Python，从底往顶）：
-
-```python
-from gdocs.auth import get_credentials
-from googleapiclient.discovery import build
-
-creds = get_credentials(Path("secrets"))
-docs = build("docs", "v1", credentials=creds)
-doc = docs.documents().get(documentId=DOC_ID).execute()
-
-# 找到 "!alt text" 占位段落的 startIndex
-# 按 index 降序排列
-# 逐个调用: gdocs image DOC_ID path --index {start} --width 468
+```yaml
+---
+gdoc_id: <Google Doc ID>
+gdoc_tab_id: <tab ID, optional — defaults to t.0>
+gdoc_last_synced: <ISO 8601 timestamp>
+---
 ```
 
-注意：插入图片后文档所有后续 index 会偏移，所以必须从后往前插。如果需要删除已插入的图片，用 batchUpdate 的 `deleteContentRange`。
+The file body (everything after the second `---`) is what gets written to Google Docs. The front matter is stripped before publishing.
 
-## 注意事项
+Resolution priority: `--gdoc-id` CLI argument > front matter `gdoc_id` field > create new document.
 
-- OAuth scope 为 `drive.file`，只能访问本应用创建或用户主动打开的文件
-- 搜索只能找到上述范围内的文档，无法搜索整个 Google Drive
-- 不支持删除文档（安全考虑）
-- 所有输出为 JSON，错误输出到 stderr
-- 凭证存储在项目内 `secrets/` 目录，已 gitignore
-- Token 自动刷新，过期后会自动重新授权
+## Supported Markdown
 
-## 故障排查
+All commands that accept files default to `--format markdown`. Supported conversions:
 
-### CLI publish 失败时怎么办
+| Markdown | Google Docs |
+|----------|-------------|
+| `# text` / `## text` / `### text` | Heading 1 / 2 / 3 |
+| `**bold**` / `*italic*` / `***both***` | Bold / Italic / Bold+Italic |
+| `` `code` `` | Courier New monospace |
+| `[text](url)` | Hyperlink |
+| `- item` / `1. item` | Unordered / ordered list |
+| `---` / `***` / `___` | Horizontal rule (gray centered line) |
+| `> text` | Blockquote (indent + gray left border) |
+| `| col \| col \|` | Native table (header row bolded) |
 
-**正常错误信息**（2026-04-08 之后）: `{"error": "Failed to create document '...': HTTP 503 — <body>"}` —— 现在 RuntimeError 包含了 status code 和 response body，可以直接看出原因。
+Not supported: code blocks with syntax highlighting, merged table cells, column widths, image syntax (`![]()`). Images must be inserted separately.
 
-**Status code 速查**:
-- **429 / 5xx**：transient 错误，client.py 已经自动 retry 3 次（exponential backoff），如果仍失败说明 Google API 真的挂了。**直接重试整个命令**，不要 fallback 到 workaround。
-- **400**：request 格式错（title 含特殊 char、content 太大、参数错误等）。看 response body 找 specific 字段。
-- **401 / 403**：OAuth 失效。删 `secrets/token.json` 重新授权。
-- **404**：doc_id 不存在或没权限。
+## Error Handling
 
-**反 pattern：fallback 到 workaround chain**
+Errors go to stderr as JSON:
 
-如果 CLI publish 失败，**不要**这样做：
-1. 跑 `gdocs create` 试 auth ← 留下 test doc 污染
-2. 用 Python 直接 call `client.create_document()` ← 绕过 CLI 后续步骤
-3. 用 `gdocs tab replace` 修复
-4. 重新 share
+```json
+{"error": "<message>", "status_code": 429, "response": "<API body or null>"}
+```
 
-**正确做法**：先看 error 的 status code 和 body。Transient 就直接 retry CLI publish 命令；permanent 就根据 body 的具体字段诊断。如果不得不创建 debug doc 来验证 auth，**用完立即 `gdocs delete DOC_ID` 清理掉**。
+Decision tree by HTTP status:
 
-**已知触发场景**:
-- 大文件（>15,000 字）publish 偶尔触发 5xx — 已经 auto-retry，若 4 次都失败考虑拆 tab
-- Google API 偶发 503 — auto-retry 通常能 cover
+- **429 or 5xx** — Transient. The tool auto-retries 4 times with exponential backoff. If it still fails, retry the whole command after waiting. Do not fall back to manual `create` + `tab replace` chains.
+- **400** — Bad request. Read the `response` field for the specific API error.
+- **401 or 403** — Authentication problem. Delete `secrets/token.json` and re-run. For 403, also verify the user's email is in the OAuth consent screen Test users list.
+- **404** — Document not found or no permission.
 
-### CLI publish 排版不对（markdown 没渲染成 headings / tables）
+If `publish` or `sync` renders Markdown as plain text (no formatting), re-apply formatting to the existing doc: `python -m gdocs tab replace DOC_ID t.0 file.md --format markdown`. Use `tab list DOC_ID` to confirm the tab ID. Do not create a new document.
 
-**症状**: doc 创建成功但所有内容是纯文本，没有 heading 样式。
+## Known Pitfalls
 
-**原因**: `client.create_document()` 直接 call 不走 `content_format="markdown"` 路径。CLI publish 路径正确（line 90-98 of `__main__.py` 用 `content_format="markdown"`）。
+These are real failure patterns encountered in production:
 
-**修复**: 用 `gdocs tab replace DOC_ID t.0 file.md --format markdown` 重新写入同一份 doc。Tab id 可以用 `gdocs tab list DOC_ID` 查到（默认是 `t.0`）。**不要重新 create 一份新 doc** —— 那样会留下原 doc 在用户 Drive 里。
+**OAuth 403 with no visible error page.** When the OAuth consent screen is External + testing mode, the user's Gmail must be in the Test users list. Skipping this causes a raw `Error 403: access_denied` — not the expected "unverified app" page. Guide the user to add their email at https://console.cloud.google.com/auth/audience.
 
-### OAuth 重新授权
+**Publish transient failure cascade.** If `publish` fails with transient errors, do not fall back to `create` → debug → `tab replace` → `share`. This creates cleanup burden and masks the real issue. Auto-retry handles most transient cases; if it exhausts retries, wait and re-run the full command.
 
-### OAuth 重新授权
+**Search scope limitation.** `drive.file` scope means the tool can only search files it created or the user explicitly opened with it. Documents created manually in the Google Docs UI won't appear. This is a scope constraint, not a bug.
 
-如果遇到 OAuth 相关错误（403 access_denied、token invalid 等）：
-1. 删除 `secrets/token.json`
-2. 重新运行命令，浏览器会弹出授权页面
-3. 确认当前 Google 账号在 OAuth consent screen 的 Test users 列表中
+**Large files (>15,000 words).** May occasionally trigger 5xx errors. Auto-retry usually handles this. If persistent, split content across multiple tabs.
+
+**Gmail token reauthorization.** Adding the Gmail scope to an existing token can produce an auth error on the first Gmail command. Delete `secrets/token.json` and re-run the command to trigger the full OAuth flow.
+
+**Gmail download deduplication.** `gmail download` skips messages whose `gmail_id` already exists in the local store. Re-running the same query fetches only new messages.
+
+**Gmail send is final.** `--dry-run` prints what would be sent without calling the API. Without `--dry-run`, Gmail sends the message.
+
+## Constraints
+
+- OAuth scopes include `documents`, `drive.file`, and `gmail.modify`. Drive access remains limited to app-created or user-opened files. Gmail access uses Google's restricted `gmail.modify` scope, so this repo uses a bring-your-own OAuth client.
+- All output is JSON. Parse stdout for results, stderr for errors. Exit code 0 = success, 1 = error.
+- Credentials live in `secrets/` (gitignored, `chmod 600`). Never commit them.
+- Gmail cache lives in `data/mail/` by default (gitignored). It contains private `.eml` files, Markdown exports, and SQLite metadata.
+- Export paths outside `data/mail/` require `--unsafe-output-dir`; avoid using it inside a git-tracked project unless the target path is ignored.
+- `token.json` auto-refreshes. Only delete it if refresh fails entirely.
+- `publish` always creates a new document. For repeated updates to the same doc, use `sync`.
+- The `image` command uploads files to Drive; these Drive files persist after insertion and are not cleaned up.

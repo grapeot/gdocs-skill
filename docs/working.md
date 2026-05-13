@@ -2,104 +2,92 @@
 
 ## Changelog
 
+### 2026-05-12
+
+- Implemented Gmail integration: download, server-side search, local read/export, send, reply, archive, trash, read/unread state, and label management.
+- Added `gdocs/gmail_client.py` for Gmail API operations and `gdocs/mail_store.py` for SQLite + `.eml` local storage.
+- Added Gmail CLI subcommands: `profile`, `download`, `search`, `list-local`, `read`, `export-md`, `send`, `reply`, `archive`, `trash`, `mark-read`, `mark-unread`, `label list`, `label apply`, and `label remove`.
+- Expanded OAuth scopes with `https://www.googleapis.com/auth/gmail.modify`. Existing Docs-only tokens need reauthorization.
+- Added local cache under `data/mail/`: raw MIME in `messages/`, SQLite metadata in `mail.db`, and optional Markdown export in `markdown/`.
+- Markdown export now refuses output paths outside `data/mail/` unless `--unsafe-output-dir` is set.
+- Added env-gated Gmail live tests. Normal test runs skip them; send and mutation checks require separate explicit environment variables.
+- Verified the gated live flow: profile, search, send, download raw MIME, reply, and archive.
+
 ### 2026-04-23
 
-- 新增 `sync` CLI 子命令：基于 MD front matter 的幂等发布 / 更新
-  - 动机：`publish` 每次新建 doc，无法处理"同一份 MD 持续更新到同一个 doc"。历史做法需要 AI agent 翻会话找 Doc ID，不稳定且费 context
-  - Schema：YAML front matter 里的 `gdoc_id` / `gdoc_tab_id` / `gdoc_last_synced` 三个字段，MD 成为自己 doc 映射的 source of truth
-  - 决策树：`--gdoc-id` 覆盖 > front matter 字段；有 id 走 `replace_tab_content`（默认 tab `t.0`），无 id 走 `create_document` 并把 id 写回 front matter
-  - 支持 `--dry-run` 预演，`--share` / `--role` / `--tab-id` / `--title` 等辅助参数
-  - 新增 `gdocs/frontmatter.py`（~90 行）封装 YAML front matter 解析 / 序列化，用 PyYAML
-  - sync orchestrator 本身在 `__main__.py`（`_sync()` 函数），`GoogleDocsClient` 保持纯 API 职责
-  - 新增依赖：PyYAML（打破之前"零第三方运行时依赖"的约束，但 YAML 细节自写容易踩坑，成本不划算）
-  - 新增 19 个单元测试（test_frontmatter.py 11 个 + test_sync.py 8 个），覆盖 parse / serialize / create 路径 / replace 路径 / dry-run / front matter 写回
-  - 已实地验证：把 `tencent_game/v1_strategy/docs/outline_v1.md` 绑定到 V1 tab，front matter 成功写回，Google Doc V1 tab 同步更新
-- 新增 `comment list / reply / resolve` CLI 子命令（基于 Drive API v3）
+- Added `comment list`, `comment reply`, and `comment resolve` CLI subcommands via Drive API v3. Comments include author, content, quoted text reference, creation time, resolution status, and replies.
+- Added `sync` CLI subcommand: idempotent Markdown-to-Google-Doc based on YAML front matter.
+  - Motivation: `publish` always creates a new document, forcing the agent to search past sessions for the right doc ID to update. `sync` makes the Markdown file itself the source of truth for its Google Doc binding.
+  - Schema: `gdoc_id`, `gdoc_tab_id`, and `gdoc_last_synced` fields in YAML front matter.
+  - Decision tree: `--gdoc-id` CLI argument overrides front matter; if a doc ID is found, do `replace_tab_content`; if not, create a new document and write the IDs back to the file.
+  - Supports `--dry-run` to preview without side effects; `--share` and `--role` on first creation.
+  - New dependency: PyYAML (breaks the previous zero-third-party constraint, but a self-written YAML mini-parser would be error-prone; PyYAML is the most stable YAML library in the Python ecosystem).
+  - New module: `gdocs/frontmatter.py` (~90 lines) for YAML front matter parse and serialize.
+  - Sync orchestrator lives in `__main__.py` (`_sync()` function); `GoogleDocsClient` stays a pure API wrapper.
+  - Added 19 unit tests (11 for frontmatter, 8 for sync) covering parse, serialize, create path, replace path, dry-run, and front matter write-back.
+  - Verified end-to-end: bound a project Markdown file to a specific tab in an existing Google Doc, confirmed front matter was written back and tab content updated.
 
 ### 2026-03-09
 
-- 新增 `tab list DOC_ID` CLI 命令：列出文档所有 tab 的 ID 和标题
-- 新增 `tab add DOC_ID "标题" [文件] [--format]` CLI 命令：给现有文档添加新 tab，可选填充内容（支持 Markdown）
-- 新增 `list_tabs()` 和 `add_tab()` 方法到 GoogleDocsClient
-- 新增 8 个单元测试覆盖新功能（client + CLI）
-- **新增 Markdown 表格支持**（`feat/table-support` 分支）：
-  - Markdown 中的 `| col1 | col2 |` 表格语法现在渲染为 Google Docs 原生表格
-  - 表头行自动加粗
-  - 空单元格正确跳过（不插入空文本）
-  - 单元格文本按反序插入，避免索引偏移
-  - 支持表格与普通文本混排（文本→表格→文本→表格...）
-  - `markdown.py` 重构为分段架构：`_split_at_tables()` 将内容分为 text/table 段，各段独立生成请求
-  - 不支持合并单元格、列宽控制、对齐方式（设计决策：只支持简单表格）
-  - `markdown_to_requests()` 返回类型不变（`tuple[list[dict], int]`），无需修改调用方
-  - 新增 10 个表格专用单元测试，总测试数 84 个，全部通过
-  - 已在"测试"文档中验证：新建 "Table 测试" tab 含 3x3 表格 + 前后文本，渲染正确
-  - 已重新渲染 "AI 周报 2026-03-07" tab，表格从纯文本升级为原生 Google Docs 表格
+- Added `tab list DOC_ID` CLI command: lists all tabs in a document with IDs and titles.
+- Added `tab add DOC_ID "Title" [file] [--format]` CLI command: adds a new tab to an existing document, optionally with content from a file.
+- Added `list_tabs()` and `add_tab()` methods to `GoogleDocsClient`.
+- Added 8 unit tests for the new tab operations.
+- Added Markdown table support:
+  - `| col | col |` syntax renders as native Google Docs tables with bolded header rows.
+  - Empty cells are correctly skipped (no empty text insertion).
+  - Cell text is filled in reverse order to avoid index drift from preceding insertions.
+  - Content architecture refactored to segment-based processing: `_split_at_tables()` divides content into text and table segments, each generating independent API requests.
+  - Tables can interleave with text blocks.
+  - `markdown_to_requests()` return type unchanged — no callers needed modification.
+  - Added 10 table-specific unit tests. Total test count: 84, all passing.
+  - Verified in a test document: new tab with a 3×3 table and surrounding text rendered correctly.
 
 ### 2026-03-08
 
-- 完成 Google Docs Skill 技术调研：评估了纯 MCP、Skill+MCP 混合、直接 SDK 三种路线
-- 调研发现 Google Docs API 原生支持 Tab 操作（addDocumentTab / deleteTab / updateDocumentTabProperties），无需用 Heading 模拟
-- 调研 Google Drive API 搜索语法（fullText contains）、分享权限（permissions.create）、标题修改（files.update）
-- 评估 taylorwilsdon/google_workspace_mcp（1731 stars）作为 MCP 候选方案，最终因安全性考虑放弃
-- 对比 SDK vs MCP 工作量：SDK 约 200-300 行 / 16-32h，MCP 约 15-30 行 / 3.5-6.5h
-- 最终决策：直接使用 google-api-python-client，零第三方运行时依赖
-- 完成 OAuth 2.0 配置（Google Cloud Console 创建项目、启用 API、配置 consent screen、创建 Desktop app 凭证）
-- 撰写 prd.md（产品需求）和 rfc.md（技术方案 RFC）
-- 建立项目目录结构，凭证存储在项目内 secrets/ 目录
-- 通过两个并行 sub-agent 完成 src/auth.py（63 行）和 src/client.py（191 行）实现
-- 通过 sub-agent 完成 tests/unit/test_auth.py（5 个测试）和 tests/unit/test_client.py（15 个测试）
-- 修复 6 个因并行 agent 间接口不匹配导致的单元测试失败：
-  - auth.py 中的 isinstance 防御性检查导致 MagicMock 无法通过 → 移除 isinstance 守卫，改用 cast
-  - test_client.py 中 get() 断言缺少 fields 参数 → 补全
-  - test_client.py 中 email_message 参数名与实际 message 不一致 → 修正
-  - test_auth.py 中 PropertyMock 对 MagicMock 类不生效 → 改用 MagicMock(valid=True)
-  - test_auth.py 中 creds.to_json() 返回 MagicMock 而非字符串 → 设置 return_value
-- 单元测试 20/20 全部通过
-- 完成集成测试 tests/integration/test_integration.py（9 个测试），覆盖完整流程：创建文档 → 创建带 Tab 文档 → 修改内容 → 重命名 → 搜索 → 分享 → 获取链接 → 清理
-- 集成测试全部通过（8 passed, 1 skipped — share_document 因未设 GDOCS_TEST_EMAIL 跳过）
-- 手动测试创建带格式的文档成功（标题、加粗、斜体、列表），确认 Google Docs API 格式化请求正常工作
-- 实现 src/markdown.py（289 行）— Markdown → Google Docs API 请求转换器，三阶段架构（解析→纯文本→请求生成）
-  - 支持：H1/H2/H3 标题、加粗、斜体、加粗斜体、行内代码、超链接、无序列表、有序列表
-  - 纯 Python 实现，无第三方 Markdown 解析库依赖
-- 更新 client.py — create_document 和 modify_document 新增 content_format 参数（"plain" / "markdown"）
-- 更新 PRD：新增 Markdown 格式支持（P0）和用户场景
-- 更新 RFC：新增 Markdown → Google Docs 格式转换设计章节
-- Security check 通过：git 历史中无敏感信息，.gitignore 正确覆盖所有凭证文件
-- 创建 docs/skill_google_docs.md（AI agent 可读的 skill 文件）
-- 在 rules/skills/ 创建 symlink 并更新 INDEX.md
-- GitHub 创建 private repo：https://github.com/grapeot/gdocs-skill（未 push）
-- 新增 `rename_tab(doc_id, tab_id, new_title)` 方法，通过 `updateDocumentTabProperties` API 实现 tab 重命名
-- 新增 `replace_tab_content(doc_id, tab_id, text, content_format)` 方法，先删除旧内容再写入新内容，支持 Markdown 格式
-- 手动测试：将 ai_frontline_20260307.md 的内容替换到 Tab 1，重命名为 "AI 前线 2026-03-07"
-- 新增 Markdown 分割线（`---`）支持：由于 Google Docs 没有原生 HR，实现为 ━×30 灰色居中文字（6pt），视觉效果接近分割线
-- 新增 Markdown 引用块（`> text`）支持：通过 `indentStart` 36pt + `borderLeft` 灰色实线实现
-- 手动测试分享功能：成功分享文档给 grapeot@outlook.com 作为 editor
-- 删除空 Tab 1（`deleteTab` API）
-- 单元测试扩展至 54 个（新增 rename_tab、replace_tab_content、HR/blockquote 测试）
-- 重命名 `src/` → `gdocs/` 包，支持 `python -m gdocs` CLI 调用方式
-- 更新所有 import 路径（测试文件、内部引用）从 `src.` → `gdocs.`
-- 新增 CLI 入口 `gdocs/__main__.py`（argparse），所有功能可通过 `python -m gdocs <subcommand>` 调用
-- CLI 子命令：publish、create、search、share、title、link、tab rename、tab replace
-- 所有 CLI 输出为 JSON 格式，便于 AI agent 程序化处理
-- 重写 skill 文件（`docs/skill_google_docs.md`），从 Python 代码示例改为 CLI 命令示例
-- 更新 PRD 新增 CLI 场景和功能、RFC 新增 CLI 设计章节和目录结构
+- Completed technology evaluation: three paths assessed (pure MCP, hybrid, direct SDK). Direct SDK chosen for security (minimum attack surface) and controllability (300 lines of our code vs 3000+ of others). One-time cost of 16–32 hours development accepted for long-term safety.
+- Discovered Google Docs API native tab support (since ~October 2024) — no need to simulate tabs with heading structures.
+- Completed OAuth 2.0 setup workflow: Google Cloud project creation, API enablement, consent screen configuration (External, test users), Desktop app credential creation.
+- Implemented core `GoogleDocsClient` (191 lines) via parallel sub-agents: create, search, modify, share, tab management.
+- Implemented `auth.py` (63 lines) for OAuth credential lifecycle.
+- Package renamed from `src/` to `gdocs/` to support `python -m gdocs` entry point.
+- Implemented `__main__.py` CLI entry with argparse: `publish`, `create`, `search`, `share`, `title`, `link`, `tab rename`, `tab replace` subcommands.
+- Implemented `markdown.py` (289 lines initially): three-phase pipeline (parse → flatten → generate) converting Markdown to Google Docs API requests.
+- Added horizontal rule support: Google Docs has no native HR API, so implemented as 30× ━ (U+2501) characters in gray 6pt font, centered.
+- Added blockquote support: left indent 36pt + gray left border via `updateParagraphStyle`.
+- All CLI output set to JSON format for AI agent consumption; errors to stderr.
+- Unit tests: 54 passing (auth, client, markdown, CLI). Integration tests: 8 passed, 1 skipped (share test requires `GDOCS_TEST_EMAIL` env var).
+- Fixed 6 unit test failures caused by parallel agent interface mismatches: `isinstance(Credentials)` guards failing on MagicMock, missing `fields` parameter assertions, parameter name inconsistencies, `PropertyMock` issues on mock classes.
 
 ## Lessons Learned
 
-- Google Docs API 的 Tab 功能是较新的（约 2024 年 10 月），很多 Stack Overflow 答案和旧文档仍说"不支持创建 Tab"，需要以官方 API Reference 为准
-- 文档标题修改不在 Docs API 中，而是通过 Drive API 的 files().update() 完成——Docs API 管内容，Drive API 管元数据
-- OAuth scope 选 `drive.file` 而非 `drive`，前者是最小权限原则（只能访问本应用创建或用户主动打开的文件），但这也意味着搜索范围受限于此
-- MCP 服务器（如 google_workspace_mcp）虽然大幅减少代码量，但引入了 fastmcp 等社区规模较小的依赖，增加供应链攻击面。对于长期使用的 skill，直接 SDK 更安全可控
-- Google Cloud Console 创建 OAuth 凭证时，Application type 要选 "Desktop app"，这决定了授权流程使用 localhost 回调，适合本地 CLI 场景
-- 并行开发 src 和 test 时，接口细节（参数名、额外参数）容易出现不一致。应先固定接口签名再分发任务，或由一个 agent 先写完 src 再写 test
-- auth.py 中的 isinstance(mock, Credentials) 在单元测试中永远返回 False（MagicMock 不是 Credentials 的实例）。对于类型安全来说，用 typing.cast 替代运行时 isinstance 检查更适合可测试性
-- Google Drive 搜索索引有延迟，集成测试中搜索新创建/重命名的文档需要加重试逻辑（每次 2s，最多 6 次）
-- OAuth consent screen 配置为 External + 未发布状态时，**必须**将用户 Gmail 加入 Test users 列表，否则授权会直接返回 `Error 403: access_denied`（而非显示 "This app isn't verified" 的 Continue 页面）。这一步容易被忽略
-- Tab 重命名的 API 格式：`tabId` 要放在 `tabProperties` 内部（`{"updateDocumentTabProperties": {"tabProperties": {"tabId": "...", "title": "..."}, "fields": "title"}}`），不是作为 `tabProperties` 的兄弟字段。通过 Google Docs Discovery API schema 确认
-- Google Docs 没有原生的水平分割线插入 API，需要用替代方案模拟。最终选择 ━（U+2501 BOX DRAWINGS HEAVY HORIZONTAL）×30 + 灰色 6pt 居中对齐
-- 引用块通过 `updateParagraphStyle` 设置左缩进 + 左边框实现，`borderLeft` 需要包含 `color`、`width`、`dashStyle`、`padding` 四个子字段
-- CLI 比现场写 Python 更适合 AI agent 调用：减少 import/venv/path 出错机会，一行命令完成操作，JSON 输出便于程序化处理
-- 包从 `src/` 重命名为 `gdocs/` 后，`python -m gdocs` 自动寻找 `gdocs/__main__.py`，无需额外安装步骤
-- Google Docs `insertTable` API 的索引行为：在 index N 调用 insertTable 后，表格元素实际从 N+1 开始（不是 N）。这意味着 cell(r,c) 的空位置公式是 `insertion_index + r*(2*C+1) + 2*c + 4`（不是 +3），空表格占用大小是 `R*(2*C+1) + 3`（不是 +2）。这个 +1 偏移在 Google 官方文档中没有明确说明，只能通过实际 API 调用后读取文档结构来验证
-- 表格单元格文本必须按反序插入（最后一个 cell 先插入），否则前面的插入会改变后面 cell 的索引位置。这与普通文本的顺序插入逻辑不同
-- 混合内容（文本+表格+文本）的渲染需要先将 markdown 按表格边界分段，每段独立计算索引。段间共享 end_index 作为下一段的 start_index，确保索引连续
+### API Behavior
+
+- Google Docs API native tab support dates to approximately October 2024. Many Stack Overflow answers and older documentation still claim tabs are unsupported — always verify against the official API reference and Discovery API schema.
+- Document titles are modified through Drive API `files().update()`, not Docs API. Docs handles content; Drive handles metadata.
+- `insertTable` API has an undocumented +1 index offset: a table inserted at index N occupies positions starting at N+1. The cell position formula is `insertion_index + r*(2*C+1) + 2*c + 4`. This offset is not documented in Google's official reference and was discovered through trial and error by reading the document structure after insertion.
+- Table cell text must be inserted in reverse order (last cell first) to prevent earlier insertions from shifting later cell indices. This is the inverse of regular text insertion, where order does not matter after the single `insertText`.
+- Mixing text, tables, and more text requires segmenting content at table boundaries, computing indices independently per segment, and chaining segments via a shared `end_index` cursor.
+- Google Drive search index has propagation delay. Integration tests searching for newly created or renamed documents need retry logic (2-second intervals, up to 6 attempts).
+
+### OAuth
+
+- When OAuth consent screen is configured as External + unpublished (testing mode), the user's Gmail address must be explicitly added to the Test users list. Skipping this step causes `Error 403: access_denied` rather than the expected "unverified app" warning page. The 403 provides no actionable hint about the missing test user configuration.
+- Token refresh is automatic through the Google SDK's `Credentials.refresh()`. Only delete `token.json` and re-authorize if the refresh token itself is revoked or expired.
+- Desktop app OAuth flow uses `localhost` callback. The `InstalledAppFlow.run_local_server(port=0)` call binds to an ephemeral port, so no static port configuration is needed.
+- Adding a new OAuth scope after `token.json` exists requires reauthorization. For Gmail, deleting `secrets/token.json` and running `python -m gdocs gmail profile` is the clean recovery path.
+- Gmail labels need three resolution paths: system labels such as `INBOX`, raw label IDs such as `Label_123`, and user label names fetched from `users.labels.list`.
+- Gmail archive is a label mutation: remove `INBOX`. Trash uses a separate recoverable API endpoint.
+
+### Development Practice
+
+- Parallel development of source and test files by separate agents caused interface mismatches: parameter names differed (`email_message` vs `message`), extra parameters in assertions were missing, and type guards (`isinstance(mock, Credentials)`) broke in tests where `MagicMock` is not an instance of the real class. The lesson: stabilize interface signatures before distributing implementation.
+- `isinstance(obj, Credentials)` returns `False` for `MagicMock` in unit tests. Use `typing.cast` for type annotations rather than runtime `isinstance` guards when testability matters.
+- Tab rename API format: `tabId` must be nested inside `tabProperties`, not as a sibling field. The correct structure is `{"updateDocumentTabProperties": {"tabProperties": {"tabId": "...", "title": "..."}, "fields": "title"}}`. This was confirmed by reading the Google Docs Discovery API schema.
+
+### Architectural
+
+- CLI is a better interface for AI agents than direct Python API calls. It eliminates import path errors, venv activation mistakes, and credential directory confusion. One bash command performs the entire operation, and JSON output is trivially parseable. The trade-off is less flexibility for complex multi-step operations, but the common cases (publish, sync, search, share) are well-served.
+- Renaming the package from `src/` to `gdocs/` made `python -m gdocs` work automatically. Packages whose directory name matches the module name require no additional configuration.
+- Keeping `_sync()` in `__main__.py` rather than in `client.py` maintains clean separation: `GoogleDocsClient` is a pure API wrapper; `_sync()` is a workflow orchestrator that composes client methods with file I/O and front matter parsing.
+- Google Docs has no native horizontal rule insertion API. The simulation approach (repeated box-drawing characters in a styled paragraph) is fragile — it depends on font rendering, may break on different platforms, and does not behave like a real page break. A future API might add native support; until then, this is the best available option.

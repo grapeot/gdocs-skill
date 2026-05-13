@@ -1,164 +1,176 @@
 # Google Docs Skill
 
-通过 Google 官方 Python SDK 直接操控 Google Docs，支持创建带 Tab 结构的文档、搜索、修改、分享。
+CLI tool for Google Docs and Gmail automation via the official Python SDK. All output is JSON — built for both direct use and AI agent consumption.
 
-## 项目结构
+## What it does
 
-```
-gdocs_skill/
-├── docs/
-│   ├── prd.md                  # 产品需求文档
-│   ├── rfc.md                  # 技术方案 RFC
-│   ├── skill_google_docs.md    # AI agent 可读的 skill 文件
-│   └── working.md              # Changelog + Lessons Learned
-├── secrets/                    # OAuth 凭证（已 gitignore）
-│   ├── credentials.json
-│   └── token.json
-├── gdocs/                      # Python 包
-│   ├── __init__.py
-│   ├── __main__.py             # CLI 入口
-│   ├── auth.py                 # OAuth 认证
-│   ├── client.py               # GoogleDocsClient
-│   └── markdown.py             # Markdown → Google Docs 转换
-├── tests/
-├── .gitignore
-├── pyproject.toml
-└── README.md
-```
+- Create, search, modify, share, and delete Google Docs
+- Publish Markdown files to Google Docs with full formatting (headings, bold, italic, lists, tables, blockquotes, inline code, links, horizontal rules)
+- Idempotent `sync` command: Markdown files carry their own Google Doc binding via YAML front matter, so repeated updates land on the same document
+- Insert local images into documents
+- List, reply to, and resolve comments
+- Full tab management: list, add, rename, replace content
+- Download, search, read, export, send, reply to, archive, trash, and label Gmail messages
 
-## 功能概览
-
-- CLI 命令行工具（`python -m gdocs`），所有输出为 JSON
-- 创建文档（支持原生 Tab 结构）
-- 发布 Markdown 文件到 Google Docs（保留格式）
-- 搜索文档（Drive API 全文搜索）
-- 修改文档内容（batchUpdate，支持 Markdown）
-- Tab 管理（重命名、替换内容）
-- 修改文档标题
-- 分享文档（添加用户权限、获取分享链接）
-
-## 快速开始
+## Quick install
 
 ```bash
+git clone https://github.com/grapeot/gdocs-skill.git
+cd gdocs-skill
+uv venv
 source .venv/bin/activate
-python -m gdocs publish path/to/report.md --title "报告标题"
-python -m gdocs search "关键词"
-python -m gdocs share DOC_ID --email user@example.com
+uv pip install -e .
 ```
 
-## 技术选型
+Dependencies: `google-api-python-client`, `google-auth`, `google-auth-oauthlib`, and `pyyaml`.
 
-直接使用 Google 官方 SDK（`google-api-python-client`），不依赖任何第三方 MCP 服务器。选型理由详见 `docs/rfc.md`。
+## OAuth setup (one-time)
 
-依赖仅三个 Google 官方包：
-- `google-api-python-client`
-- `google-auth`
-- `google-auth-oauthlib`
+This repo uses a **bring-your-own OAuth client** model. You create a Google Cloud project and download your own credentials. No shared client secrets are distributed.
 
----
+### Step 1: Create a Google Cloud project
 
-## 初始化配置指南（面向 AI agent）
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Create a new project (name it e.g. `gdocs-skill`)
+3. Wait a few seconds for the project to be created, then confirm the project selector shows the new name
 
-以下是引导用户完成首次配置的完整流程。AI agent 应按顺序引导用户完成每一步，在每一步确认用户完成后再进入下一步。
+### Step 2: Enable APIs
 
-### 前置检查
+1. Search for "Google Docs API" in the console search bar and click **ENABLE**
+2. Search for "Google Drive API" and click **ENABLE**
+3. Search for "Gmail API" and click **ENABLE**
 
-在开始之前，先确认：
+Verify at the [API Dashboard](https://console.cloud.google.com/apis/dashboard) — all enabled APIs should appear there.
 
-1. 用户是否有 Google 账号（Gmail 或 Google Workspace）
-2. `secrets/` 目录下是否已存在 `credentials.json` —— 如果已存在，跳到「Step 6: 验证」
+### Step 3: Configure OAuth consent screen
 
-### Step 1: 创建 Google Cloud 项目
+1. Navigate to "OAuth consent screen" in the left sidebar
+2. Choose **External** as the user type (unless you have Google Workspace and only need internal use)
+3. Fill in required fields: App name (any), user support email, developer contact email
+4. On the Scopes page, click **ADD OR REMOVE SCOPES** and add:
+   - `https://www.googleapis.com/auth/documents`
+   - `https://www.googleapis.com/auth/drive.file`
+   - `https://www.googleapis.com/auth/gmail.modify`
+5. On the Test users page, click **ADD USERS** and add your own Gmail address
+   - **Critical**: skipping this step causes `Error 403: access_denied` instead of the authorization prompt. The app runs in testing mode, and only listed test users can authorize.
+6. Save and return to dashboard
 
-引导用户访问 https://console.cloud.google.com/
+### Step 4: Create OAuth credentials
 
-操作：
-1. 点击页面顶部的项目选择器（通常显示 "Select a project" 或已有项目名）
-2. 在弹出的对话框中点击右上角的 "NEW PROJECT"
-3. 填写 Project name（建议填 `google-docs-skill`）
-4. Organization 可以留空
-5. 点击 "CREATE"
-6. 等待项目创建完成（通常几秒钟），确认顶部项目选择器显示新项目名
+1. Go to [Credentials](https://console.cloud.google.com/apis/credentials)
+2. Click **+ CREATE CREDENTIALS** → **OAuth client ID**
+3. Choose **Desktop app** as the application type
+4. Name it anything (e.g. `gdocs-skill-desktop`)
+5. Click **CREATE**, then click **DOWNLOAD JSON** in the dialog
 
-### Step 2: 启用 API
+### Step 5: Install the credentials file
 
-在刚创建的项目中，需要启用两个 API。
-
-操作：
-1. 在 Console 顶部搜索栏搜索 "Google Docs API"，点击搜索结果进入
-2. 点击 "ENABLE"（启用）按钮
-3. 返回搜索栏，搜索 "Google Drive API"
-4. 同样点击 "ENABLE"
-
-验证：在 https://console.cloud.google.com/apis/dashboard 页面的 "Enabled APIs" 列表中，应能看到 Google Docs API 和 Google Drive API。
-
-### Step 3: 配置 OAuth Consent Screen
-
-操作：
-1. 在左侧导航栏找到 "OAuth consent screen"（或通过搜索栏搜索）
-2. 选择 User Type 为 "External"（除非用户有 Google Workspace 且只需内部使用，则选 "Internal"）
-3. 点击 "CREATE"
-4. 填写必填信息：
-   - App name: `Google Docs Skill`
-   - User support email: 用户自己的邮箱
-   - Developer contact information: 用户自己的邮箱
-5. 点击 "SAVE AND CONTINUE"
-6. 在 Scopes 页面，点击 "ADD OR REMOVE SCOPES"，搜索并勾选：
-   - `https://www.googleapis.com/auth/documents`（Google Docs API - 查看和管理文档）
-   - `https://www.googleapis.com/auth/drive.file`（Google Drive API - 查看和管理文件）
-7. 点击 "UPDATE"，然后 "SAVE AND CONTINUE"
-8. **（关键步骤）** 在 Test users 页面，点击 "ADD USERS"，添加用户自己的 Gmail 地址。也可以直接访问 https://console.cloud.google.com/auth/audience 进行配置。**如果跳过此步，授权时会遇到 `Error 403: access_denied`（"has not completed the Google verification process"），而不是授权确认页面。** 应用处于测试模式（External + 未发布）时，只有被添加到 Test users 列表中的账号才能授权。
-9. 点击 "SAVE AND CONTINUE"，最后点击 "BACK TO DASHBOARD"
-
-### Step 4: 创建 OAuth 2.0 凭证
-
-操作：
-1. 在左侧导航栏点击 "Credentials"（凭据），或直接访问 https://console.cloud.google.com/apis/credentials
-2. 点击页面顶部的 "+ CREATE CREDENTIALS" 按钮
-3. 在下拉菜单中选择 "OAuth client ID"
-4. Application type 选择 "Desktop app"（这表示应用跑在用户本地电脑上，授权时会通过 localhost 回调）
-5. Name 填写 `gdocs-skill-desktop`（仅用于辨识，随意填写）
-6. 点击 "CREATE"
-
-### Step 5: 下载凭证 JSON
-
-操作：
-1. 创建成功后会弹出对话框，显示 Client ID 和 Client Secret
-2. 点击对话框中的 "DOWNLOAD JSON" 按钮（或下载图标）
-3. 浏览器会下载一个文件，文件名类似 `client_secret_123456789-xxx.apps.googleusercontent.com.json`
-4. 将该文件移动到本项目的 `secrets/` 目录，并重命名为 `credentials.json`
-
-如果不小心关掉了对话框：回到 Credentials 页面，在 "OAuth 2.0 Client IDs" 列表中找到刚创建的条目，点击最右边的下载图标即可重新下载。
-
-终端命令（AI agent 帮用户执行）：
 ```bash
-mv ~/Downloads/client_secret_*.json <项目路径>/secrets/credentials.json
-chmod 600 <项目路径>/secrets/credentials.json
+mv ~/Downloads/client_secret_*.json secrets/credentials.json
+chmod 600 secrets/credentials.json
 ```
 
-### Step 6: 验证
+If you closed the download dialog, go back to the Credentials page, find your OAuth client in the list, and click the download icon on the right.
 
-确认配置完成：
+### Step 6: Verify
+
 ```bash
-ls -la secrets/credentials.json
-# 应显示文件存在，权限为 -rw-------
+python -m gdocs create --title "Smoke test"
 ```
 
-首次运行 Python 脚本时，会自动弹出浏览器窗口要求登录 Google 账号并授权。授权完成后，`secrets/token.json` 会自动生成，后续运行无需重复授权。
+On first run, a browser window opens for Google authorization. After authorizing, `secrets/token.json` is created and subsequent runs require no interaction.
 
-### 常见问题
+If you previously authorized the tool before Gmail support existed, delete `secrets/token.json` and run `python -m gdocs gmail profile` to reauthorize with the new Gmail scope.
 
-**Q: 授权时提示 "Access blocked" / `Error 403: access_denied`**
-A: 说明当前登录的 Google 账号不在 OAuth consent screen 的 Test users 列表中。前往 https://console.cloud.google.com/auth/audience → ADD USERS，把自己的 Gmail 地址加进去，然后重新运行授权流程。
+## Usage examples
 
-**Q: 授权时提示 "This app isn't verified"**
-A: 这是正常的。因为应用处于测试模式，点击 "Continue"（继续）即可。只有发布到生产环境才需要 Google 审核。注意：只有先被加入 Test users 列表，才会看到这个页面；如果没加，直接看到的是 403 错误（见上一条）。
+```bash
+# Publish a Markdown file as a new Google Doc
+python -m gdocs publish report.md --title "Q4 Report"
 
-**Q: token.json 过期了怎么办？**
-A: SDK 会自动刷新 token。如果刷新失败（比如 refresh token 也过期了），删除 `secrets/token.json` 重新运行即可，会再次弹出浏览器授权。
+# Idempotent sync — first run creates the doc, later runs update it
+python -m gdocs sync report.md --title "Q4 Report"
 
-**Q: 换了电脑怎么办？**
-A: 把 `secrets/credentials.json` 拷过去就行，`token.json` 会在首次运行时重新生成。
+# Search your docs
+python -m gdocs search "quarterly review"
 
-**Q: 需要更换 Google 账号？**
-A: 删除 `secrets/token.json`，重新运行时会弹出授权页面，选择新账号即可。
+# Share a document
+python -m gdocs share DOC_ID --email colleague@example.com --role writer
+
+# List unresolved comments
+python -m gdocs comment list DOC_ID --unresolved-only
+
+# Insert an image
+python -m gdocs image DOC_ID chart.png
+
+# Check Gmail profile
+python -m gdocs gmail profile
+
+# Download recent inbox messages to data/mail/
+python -m gdocs gmail download --days 7 --limit 100 --label INBOX
+
+# Search Gmail server-side with native Gmail query syntax
+python -m gdocs gmail search "from:user@example.com newer_than:7d"
+
+# Send an email; use --dry-run first when testing
+python -m gdocs gmail send --to user@example.com --subject "Hello" --body-file body.md --dry-run
+```
+
+## Command reference
+
+| Command | Purpose |
+|---------|---------|
+| `publish <file> --title TITLE` | Publish a Markdown file as a new Google Doc (one-shot, no binding) |
+| `sync <file> [--title TITLE]` | Idempotent sync: creates on first run, updates on subsequent runs via front matter |
+| `create --title TITLE` | Create an empty document |
+| `delete DOC_ID [--permanent]` | Move to trash (default, recoverable 30 days) or permanently delete |
+| `search QUERY [--max-results N]` | Full-text search across accessible Google Docs |
+| `share DOC_ID --email EMAIL [--role ROLE] [--message MSG]` | Share a document with a user |
+| `title DOC_ID NEW_TITLE` | Rename a document |
+| `link DOC_ID [--public]` | Get the shareable link, optionally enabling public access |
+| `tab list DOC_ID` | List all tabs in a document |
+| `tab add DOC_ID TITLE [FILE] [--format FMT]` | Add a new tab, optionally with content from a file |
+| `tab rename DOC_ID TAB_ID NEW_TITLE` | Rename a tab |
+| `tab replace DOC_ID TAB_ID FILE [--format FMT]` | Replace a tab's content from a file |
+| `image DOC_ID IMAGE_PATH [--index N] [--width W] [--tab-id ID]` | Insert a local image |
+| `comment list DOC_ID [--unresolved-only]` | List document comments |
+| `comment reply DOC_ID COMMENT_ID TEXT` | Reply to a comment |
+| `comment resolve DOC_ID COMMENT_ID` | Mark a comment as resolved |
+| `gmail profile` | Show authenticated Gmail address and mailbox stats |
+| `gmail download [--days N] [--limit N] [--label L] [--query Q]` | Download messages to the local `.eml` cache |
+| `gmail search QUERY [--limit N] [--label L]` | Search Gmail server-side with native Gmail query syntax |
+| `gmail list-local [--limit N]` | List locally cached messages |
+| `gmail read [--gmail-id ID] [--subject S] [--from F] [--latest] [--index N] [--full]` | Read a cached message body |
+| `gmail export-md [--limit N] [--subject S] [--from F] [--output-dir DIR] [--unsafe-output-dir] [--force]` | Export cached messages as Markdown |
+| `gmail send --to ADDR --subject S --body-file F [--cc ADDR] [--bcc ADDR] [--body-format FMT] [--dry-run]` | Send an email |
+| `gmail reply --gmail-id ID --body-file F [--to ADDR] [--cc ADDR] [--body-format FMT] [--dry-run]` | Reply to a Gmail thread |
+| `gmail archive GMAIL_ID [--dry-run]` | Remove the `INBOX` label |
+| `gmail trash GMAIL_ID [--dry-run]` | Move a message to trash |
+| `gmail mark-read GMAIL_ID [--dry-run]` | Mark a message as read |
+| `gmail mark-unread GMAIL_ID [--dry-run]` | Mark a message as unread |
+| `gmail label list` | List Gmail labels |
+| `gmail label apply GMAIL_ID --label LABEL [--dry-run]` | Apply a label |
+| `gmail label remove GMAIL_ID --label LABEL [--dry-run]` | Remove a label |
+
+All commands output JSON to stdout. Errors go to stderr as `{"error": ..., "status_code": ..., "response": ...}`. Exit code 0 on success, 1 on error.
+
+## Markdown support
+
+Headings (H1–H3), bold, italic, bold+italic, inline code, hyperlinks, unordered lists, ordered lists, horizontal rules, blockquotes, and native tables. See [docs/prd.md](docs/prd.md) for the full format table.
+
+## Safety
+
+- OAuth credentials stored in `secrets/` — excluded from git via `.gitignore`, files set to mode `600`
+- OAuth scopes: `documents` (Docs content read/write), `drive.file` (file-level access only), and `gmail.modify` (Gmail read/send/label operations)
+- Token auto-refresh; automatic re-authorization if refresh fails
+- Retries on transient API errors (HTTP 429 and 5xx) with exponential backoff (1s, 2s, 4s)
+- Gmail cache stored in `data/mail/` by default — excluded from git because it contains private email data
+
+The global `--mail-data-dir` flag overrides the Gmail cache location. The default layout is `data/mail/messages/` for raw `.eml`, `data/mail/markdown/` for exports, and `data/mail/mail.db` for SQLite metadata. `gmail export-md --output-dir` refuses paths outside `data/mail/` unless `--unsafe-output-dir` is set, because exported Markdown contains private email bodies.
+
+## Documentation
+
+- [Feature reference](docs/prd.md) — what the tool can do
+- [Architecture decisions](docs/rfc.md) — why it works the way it does
+- [Changelog](docs/working.md) — history and lessons learned
+- [AI agent skill file](docs/skill_google_docs.md) — complete CLI reference with troubleshooting
