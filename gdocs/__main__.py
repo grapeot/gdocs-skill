@@ -10,6 +10,8 @@ from pathlib import Path
 
 from googleapiclient.errors import HttpError
 
+from .calendar_client import CalendarClient
+from .calendar_commands import run_calendar_command
 from .client import GoogleDocsClient
 from .docs_commands import run_docs_command
 from .gmail_client import GmailClient
@@ -22,6 +24,12 @@ def run_command(args: argparse.Namespace) -> object:
     data = vars(args)
     secrets_dir = Path(data["secrets_dir"])
     command = str(data["command"])
+    if command == "calendar":
+        return run_calendar_command(
+            data,
+            secrets_dir,
+            calendar_client_cls=CalendarClient,
+        )
     if command == "gmail":
         return run_gmail_command(
             data,
