@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
+import stat
 
 import pytest
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import MagicMock, patch
 
 from gdocs.auth import SCOPES, get_credentials
 
@@ -89,7 +90,22 @@ def test_get_credentials_saves_token(tmp_path):
 
     token_file = secrets_dir / "token.json"
     assert token_file.exists()
+    assert stat.S_IMODE(token_file.stat().st_mode) == 0o600
     assert json.loads(token_file.read_text(encoding="utf-8")) == {
         "token": "saved-token",
         "refresh_token": "r1",
     }
+
+
+def test_get_credentials_chmods_existing_token(tmp_path):
+    secrets_dir = tmp_path
+    (secrets_dir / "credentials.json").write_text("{}", encoding="utf-8")
+    token_file = secrets_dir / "token.json"
+    token_file.write_text("{}", encoding="utf-8")
+    token_file.chmod(0o644)
+
+    creds = MagicMock(valid=True)
+    with patch("gdocs.auth.Credentials.from_authorized_user_file", return_value=creds):
+        get_credentials(secrets_dir)
+
+    assert stat.S_IMODE(token_file.stat().st_mode) == 0o600
