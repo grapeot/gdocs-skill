@@ -1,6 +1,6 @@
 # Skill: Google Docs
 
-CLI tool for operating on Google Docs and Gmail via the official Python SDK. All output is JSON — designed for AI agent consumption.
+CLI tool for operating on Google Docs, Gmail, and Google Calendar via the official Python SDK. All output is JSON — designed for AI agent consumption.
 
 - **Type**: API Guide
 - **Project**: `adhoc_jobs/gdocs_skill/`
@@ -19,6 +19,8 @@ The user says anything implying a Google Docs operation:
 - "Download recent email" / "Search Gmail for ..." / "Read this email"
 - "Send an email" / "Reply to this thread"
 - "Archive this message" / "Mark as read" / "Apply this Gmail label"
+- "Schedule a meeting" / "Create a calendar event" / "Invite ... to a call"
+- "What's on my calendar" / "List events between ..."
 
 **Default to `sync` over `publish`** when the Markdown file will be edited repeatedly. `publish` always creates a new document; `sync` binds the file to a specific doc via front matter.
 
@@ -46,7 +48,7 @@ If any of these fail, the command did not succeed. Do not assume success without
 
 `secrets/credentials.json` must exist. If missing, guide the user through OAuth setup (steps in the repo `README.md`). On first run, a browser opens for Google authorization; after that, `secrets/token.json` persists the session.
 
-Gmail commands require the `https://www.googleapis.com/auth/gmail.modify` scope. If the user authorized this tool before Gmail support existed, delete `secrets/token.json` and run `python -m gdocs gmail profile` to reauthorize. One token then covers Docs, Drive file access, and Gmail.
+Gmail commands require the `https://www.googleapis.com/auth/gmail.modify` scope; Calendar commands require `https://www.googleapis.com/auth/calendar.events`. Auth now checks that the stored token covers every required scope and forces reauthorization when it doesn't — so the first Gmail or Calendar command on an older token will open the OAuth browser flow automatically. If that flow fails, delete `secrets/token.json` and rerun. One token then covers Docs, Drive file access, Gmail, and Calendar.
 
 ## CLI Reference
 
@@ -188,6 +190,39 @@ Key semantics:
 - `--dry-run` is available on Gmail send, reply, archive, trash, mark-read, mark-unread, label apply, and label remove.
 - `export-md --output-dir` refuses paths outside `data/mail/` unless `--unsafe-output-dir` is set. Treat exported Markdown as private email data.
 
+### Calendar Commands
+
+All Calendar commands live under `python -m gdocs calendar ...`. Times are RFC 3339 strings (`2026-05-20T10:00:00-07:00` or `2026-05-20T17:00:00Z`); `--calendar-id` defaults to `primary`.
+
+```bash
+# Create an event, optionally inviting attendees
+python -m gdocs calendar create-event \
+  --summary "Planning sync" \
+  --start "2026-05-20T10:00:00-07:00" \
+  --end "2026-05-20T10:30:00-07:00" \
+  --attendee user@example.com --attendee teammate@example.com \
+  --description "Quarter kickoff" --location "Zoom" --timezone "America/Los_Angeles"
+# Output: {"event_id": "...", "html_link": "...", ...}
+
+# Update an existing event (only --summary is settable for now)
+python -m gdocs calendar update-event EVENT_ID --summary "New title"
+
+# Delete an event
+python -m gdocs calendar delete-event EVENT_ID
+
+# List events in a window
+python -m gdocs calendar list-events \
+  --time-min "2026-05-20T00:00:00-07:00" \
+  --time-max "2026-05-21T00:00:00-07:00" \
+  --max-results 20
+# Output: [{"event_id", "summary", "start", "end", "html_link"}, ...]
+```
+
+Key semantics:
+- `--attendee` is repeatable; each occurrence adds one invitee. Google sends invitation emails automatically.
+- `update-event` is currently scoped to title changes. Reschedules/attendee edits aren't exposed via CLI yet — fall back to `delete-event` + `create-event`.
+- `list-events` requires `--time-min`. `--time-max` is optional but recommended to bound results.
+
 ## Front Matter Contract (sync)
 
 `sync` reads and writes YAML front matter in the Markdown file:
@@ -250,7 +285,7 @@ These are real failure patterns encountered in production:
 
 **Large files (>15,000 words).** May occasionally trigger 5xx errors. Auto-retry usually handles this. If persistent, split content across multiple tabs.
 
-**Gmail token reauthorization.** Adding the Gmail scope to an existing token can produce an auth error on the first Gmail command. Delete `secrets/token.json` and re-run the command to trigger the full OAuth flow.
+**Gmail/Calendar token reauthorization.** Adding a new scope to an existing token used to surface as an auth error on the first command. The auth module now compares stored scopes against `SCOPES` and reruns the OAuth flow when a scope is missing, so the first Gmail or Calendar command on an old token simply opens the browser. If the auto-flow fails, delete `secrets/token.json` and re-run.
 
 **Gmail download deduplication.** `gmail download` skips messages whose `gmail_id` already exists in the local store. Re-running the same query fetches only new messages.
 
@@ -258,7 +293,7 @@ These are real failure patterns encountered in production:
 
 ## Constraints
 
-- OAuth scopes include `documents`, `drive.file`, and `gmail.modify`. Drive access remains limited to app-created or user-opened files. Gmail access uses Google's restricted `gmail.modify` scope, so this repo uses a bring-your-own OAuth client.
+- OAuth scopes include `documents`, `drive.file`, `gmail.modify`, and `calendar.events`. Drive access remains limited to app-created or user-opened files. Gmail access uses Google's restricted `gmail.modify` scope, so this repo uses a bring-your-own OAuth client. Calendar access is limited to events (not calendar list management).
 - All output is JSON. Parse stdout for results, stderr for errors. Exit code 0 = success, 1 = error.
 - Credentials live in `secrets/` (gitignored, `chmod 600`). Never commit them.
 - Gmail cache lives in `data/mail/` by default (gitignored). It contains private `.eml` files, Markdown exports, and SQLite metadata.

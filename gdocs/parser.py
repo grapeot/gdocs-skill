@@ -204,5 +204,33 @@ def build_parser() -> argparse.ArgumentParser:
         _ = command_parser.add_argument("--label", required=True)
         _ = command_parser.add_argument("--dry-run", action="store_true")
 
+    calendar_parser = subparsers.add_parser("calendar")
+    calendar_subparsers = calendar_parser.add_subparsers(dest="calendar_command", required=True)
+
+    calendar_create = calendar_subparsers.add_parser("create-event")
+    _ = calendar_create.add_argument("--calendar-id", default="primary")
+    _ = calendar_create.add_argument("--summary", required=True)
+    _ = calendar_create.add_argument("--start", required=True)
+    _ = calendar_create.add_argument("--end", required=True)
+    _ = calendar_create.add_argument("--attendee", action="append")
+    _ = calendar_create.add_argument("--description")
+    _ = calendar_create.add_argument("--location")
+    _ = calendar_create.add_argument("--timezone")
+
+    calendar_update = calendar_subparsers.add_parser("update-event")
+    _ = calendar_update.add_argument("event_id")
+    _ = calendar_update.add_argument("--calendar-id", default="primary")
+    _ = calendar_update.add_argument("--summary")
+
+    calendar_delete = calendar_subparsers.add_parser("delete-event")
+    _ = calendar_delete.add_argument("event_id")
+    _ = calendar_delete.add_argument("--calendar-id", default="primary")
+
+    calendar_list = calendar_subparsers.add_parser("list-events")
+    _ = calendar_list.add_argument("--calendar-id", default="primary")
+    _ = calendar_list.add_argument("--time-min", required=True)
+    _ = calendar_list.add_argument("--time-max")
+    _ = calendar_list.add_argument("--max-results", type=int, default=10)
+
     return parser
 

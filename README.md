@@ -1,6 +1,6 @@
 # Google Docs Skill
 
-CLI tool for Google Docs and Gmail automation via the official Python SDK. All output is JSON — built for both direct use and AI agent consumption.
+CLI tool for Google Docs, Gmail, and Calendar automation via the official Python SDK. All output is JSON — built for both direct use and AI agent consumption.
 
 ## What it does
 
@@ -11,6 +11,7 @@ CLI tool for Google Docs and Gmail automation via the official Python SDK. All o
 - List, reply to, and resolve comments
 - Full tab management: list, add, rename, replace content
 - Download, search, read, export, send, reply to, archive, trash, and label Gmail messages
+- Create Calendar events with invites and list upcoming Calendar events
 
 ## Quick install
 
@@ -51,6 +52,7 @@ Verify at the [API Dashboard](https://console.cloud.google.com/apis/dashboard) �
    - `https://www.googleapis.com/auth/documents`
    - `https://www.googleapis.com/auth/drive.file`
    - `https://www.googleapis.com/auth/gmail.modify`
+   - `https://www.googleapis.com/auth/calendar.events`
 5. On the Test users page, click **ADD USERS** and add your own Gmail address
    - **Critical**: skipping this step causes `Error 403: access_denied` instead of the authorization prompt. The app runs in testing mode, and only listed test users can authorize.
 6. Save and return to dashboard
@@ -80,7 +82,7 @@ python -m gdocs create --title "Smoke test"
 
 On first run, a browser window opens for Google authorization. After authorizing, `secrets/token.json` is created and subsequent runs require no interaction.
 
-If you previously authorized the tool before Gmail support existed, delete `secrets/token.json` and run `python -m gdocs gmail profile` to reauthorize with the new Gmail scope.
+If you previously authorized the tool before Gmail or Calendar support existed, delete `secrets/token.json` and run `python -m gdocs gmail profile` or `python -m gdocs calendar list-events --time-min 2026-01-01T00:00:00Z` to reauthorize with the new scopes.
 
 ## Usage examples
 
@@ -114,6 +116,12 @@ python -m gdocs gmail search "from:user@example.com newer_than:7d"
 
 # Send an email; use --dry-run first when testing
 python -m gdocs gmail send --to user@example.com --subject "Hello" --body-file body.md --dry-run
+
+# Create a Calendar event and invite attendees
+python -m gdocs calendar create-event --summary "Planning" --start "2026-05-20T10:00:00-07:00" --end "2026-05-20T10:30:00-07:00" --attendee user@example.com
+
+# List Calendar events in a time window
+python -m gdocs calendar list-events --time-min "2026-05-20T00:00:00-07:00" --time-max "2026-05-21T00:00:00-07:00"
 ```
 
 ## Command reference
@@ -151,6 +159,8 @@ python -m gdocs gmail send --to user@example.com --subject "Hello" --body-file b
 | `gmail label list` | List Gmail labels |
 | `gmail label apply GMAIL_ID --label LABEL [--dry-run]` | Apply a label |
 | `gmail label remove GMAIL_ID --label LABEL [--dry-run]` | Remove a label |
+| `calendar create-event --summary S --start ISO --end ISO [--attendee EMAIL] [--calendar-id ID] [--description D] [--location L] [--timezone TZ]` | Create a Calendar event and send attendee updates |
+| `calendar list-events --time-min ISO [--time-max ISO] [--calendar-id ID] [--max-results N]` | List Calendar events ordered by start time |
 
 All commands output JSON to stdout. Errors go to stderr as `{"error": ..., "status_code": ..., "response": ...}`. Exit code 0 on success, 1 on error.
 
@@ -161,7 +171,7 @@ Headings (H1–H3), bold, italic, bold+italic, inline code, hyperlinks, unordere
 ## Safety
 
 - OAuth credentials stored in `secrets/` — excluded from git via `.gitignore`, files set to mode `600`
-- OAuth scopes: `documents` (Docs content read/write), `drive.file` (file-level access only), and `gmail.modify` (Gmail read/send/label operations)
+- OAuth scopes: `documents` (Docs content read/write), `drive.file` (file-level access only), `gmail.modify` (Gmail read/send/label operations), and `calendar.events` (Calendar event create/list operations)
 - Token auto-refresh; automatic re-authorization if refresh fails
 - Retries on transient API errors (HTTP 429 and 5xx) with exponential backoff (1s, 2s, 4s)
 - Gmail cache stored in `data/mail/` by default — excluded from git because it contains private email data

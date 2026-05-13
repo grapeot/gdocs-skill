@@ -2,6 +2,7 @@ from __future__ import annotations
 
 """Authentication module for Google Docs Skill."""
 
+import json
 import os
 from pathlib import Path
 from typing import cast
@@ -14,6 +15,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/documents",
     "https://www.googleapis.com/auth/drive.file",
     "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/calendar.events",
 ]
 
 
@@ -24,6 +26,21 @@ def _write_private_token(token_path: Path, token_json: str) -> None:
     with os.fdopen(fd, "w", encoding="utf-8") as token_file:
         _ = token_file.write(token_json)
     token_path.chmod(0o600)
+
+
+def _token_has_required_scopes(token_path: Path) -> bool:
+    try:
+        raw = json.loads(token_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    stored = raw.get("scopes")
+    if isinstance(stored, str):
+        token_scopes = set(stored.split())
+    elif isinstance(stored, list):
+        token_scopes = {str(item) for item in stored}
+    else:
+        return False
+    return set(SCOPES).issubset(token_scopes)
 
 
 def get_credentials(secrets_dir: Path) -> Credentials:
@@ -51,7 +68,7 @@ def get_credentials(secrets_dir: Path) -> Credentials:
         raise FileNotFoundError(f"Missing OAuth credentials file: {credentials_path}")
 
     creds: Credentials | None = None
-    if token_path.exists():
+    if token_path.exists() and _token_has_required_scopes(token_path):
         creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
 
     if creds and creds.valid:

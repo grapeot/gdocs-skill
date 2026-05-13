@@ -14,7 +14,7 @@ from gdocs.auth import SCOPES, get_credentials
 def test_get_credentials_from_existing_token(tmp_path):
     secrets_dir = tmp_path
     (secrets_dir / "credentials.json").write_text("{}", encoding="utf-8")
-    (secrets_dir / "token.json").write_text("{}", encoding="utf-8")
+    (secrets_dir / "token.json").write_text(json.dumps({"scopes": SCOPES}), encoding="utf-8")
 
     creds = MagicMock(valid=True)
     with patch("gdocs.auth.Credentials.from_authorized_user_file", return_value=creds) as from_token:
@@ -29,7 +29,7 @@ def test_get_credentials_from_existing_token(tmp_path):
 def test_get_credentials_refresh_expired(tmp_path):
     secrets_dir = tmp_path
     (secrets_dir / "credentials.json").write_text("{}", encoding="utf-8")
-    (secrets_dir / "token.json").write_text("{}", encoding="utf-8")
+    (secrets_dir / "token.json").write_text(json.dumps({"scopes": SCOPES}), encoding="utf-8")
 
     creds = MagicMock(valid=False, expired=True, refresh_token="refresh-token")
     creds.to_json.return_value = '{"token": "refreshed"}'  # pyright: ignore[reportAny]
@@ -101,7 +101,7 @@ def test_get_credentials_chmods_existing_token(tmp_path):
     secrets_dir = tmp_path
     (secrets_dir / "credentials.json").write_text("{}", encoding="utf-8")
     token_file = secrets_dir / "token.json"
-    token_file.write_text("{}", encoding="utf-8")
+    token_file.write_text(json.dumps({"scopes": SCOPES}), encoding="utf-8")
     token_file.chmod(0o644)
 
     creds = MagicMock(valid=True)
@@ -109,3 +109,28 @@ def test_get_credentials_chmods_existing_token(tmp_path):
         get_credentials(secrets_dir)
 
     assert stat.S_IMODE(token_file.stat().st_mode) == 0o600
+
+
+def test_scopes_include_calendar_events():
+    assert "https://www.googleapis.com/auth/calendar.events" in SCOPES
+
+
+def test_get_credentials_ignores_token_missing_required_scope(tmp_path):
+    secrets_dir = tmp_path
+    (secrets_dir / "credentials.json").write_text("{}", encoding="utf-8")
+    (secrets_dir / "token.json").write_text(
+        json.dumps({"scopes": SCOPES[:-1]}),
+        encoding="utf-8",
+    )
+    oauth_creds = MagicMock(valid=True)
+    oauth_creds.to_json.return_value = json.dumps({"token": "abc", "scopes": SCOPES})
+    flow = MagicMock()
+    flow.run_local_server.return_value = oauth_creds
+
+    with patch("gdocs.auth.Credentials.from_authorized_user_file") as from_token:
+        with patch("gdocs.auth.InstalledAppFlow.from_client_secrets_file", return_value=flow):
+            result = get_credentials(secrets_dir)
+
+    assert result is oauth_creds
+    from_token.assert_not_called()
+    flow.run_local_server.assert_called_once()
