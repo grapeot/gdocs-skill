@@ -189,7 +189,7 @@ For Docs-only usage, OAuth setup is straightforward because `documents` and `dri
 
 ## 8. Gmail Integration
 
-This section records the final state of the Gmail design originally sketched in [`docs/gmail_integration.md`](gmail_integration.md). The first milestone is implemented: direct Gmail SDK access, `gmail.modify` scope, local `.eml` + SQLite cache, JSON CLI output, dry-run support for mutating operations, and env-gated live tests.
+This section records the final Gmail design. The first milestone is implemented: direct Gmail SDK access, `gmail.modify` scope, local `.eml` + SQLite cache, JSON CLI output, dry-run support for mutating operations, and env-gated live tests.
 
 ### 8.1 Scope Decision: `gmail.modify`
 

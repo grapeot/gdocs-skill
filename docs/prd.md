@@ -91,7 +91,7 @@ Insert local images (PNG, JPEG, GIF) into a document at a specific character ind
 
 ## Gmail Integration
 
-**Implementation status**: Complete for the first Gmail milestone described in [`docs/gmail_integration.md`](gmail_integration.md). The implemented surface covers download, search, local list/read/export, send, reply, archive, trash, read/unread state, and label operations.
+**Implementation status**: Complete for the first Gmail milestone. The implemented surface covers download, search, local list/read/export, send, reply, archive, trash, read/unread state, and label operations.
 
 The Gmail pipeline covers server-side search, local download, local read/export, sending, replying, and message state changes. Gmail commands are grouped under `python -m gdocs gmail ...`. Mutating operations support `--dry-run` where a preview is useful.
 
