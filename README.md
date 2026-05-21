@@ -10,7 +10,7 @@ CLI tool for Google Docs, Gmail, and Calendar automation via the official Python
 - Insert local images into documents
 - List, reply to, and resolve comments
 - Full tab management: list, add, rename, replace content
-- Download, search, read, export, send, reply to, archive, trash, and label Gmail messages
+- Download, search, read, export, inspect cached headers, send, reply to, archive, trash, and label Gmail messages
 - Create Calendar events with invites and list upcoming Calendar events
 
 ## Quick install
@@ -114,6 +114,9 @@ python -m gdocs gmail download --days 7 --limit 100 --label INBOX
 # Search Gmail server-side with native Gmail query syntax
 python -m gdocs gmail search "from:user@example.com newer_than:7d"
 
+# Inspect locally cached RFC headers for threading experiments
+python -m gdocs gmail inspect --gmail-id MSG_ID --thread
+
 # Send an email; use --dry-run first when testing
 python -m gdocs gmail send --to user@example.com --subject "Hello" --body-file body.md --dry-run
 
@@ -149,6 +152,7 @@ python -m gdocs calendar list-events --time-min "2026-05-20T00:00:00-07:00" --ti
 | `gmail search QUERY [--limit N] [--label L]` | Search Gmail server-side with native Gmail query syntax |
 | `gmail list-local [--limit N]` | List locally cached messages |
 | `gmail read [--gmail-id ID] [--subject S] [--from F] [--latest] [--index N] [--full]` | Read a cached message body |
+| `gmail inspect --gmail-id ID [--thread]` | Inspect cached raw `.eml` RFC headers for threading experiments without Gmail API calls |
 | `gmail export-md [--limit N] [--subject S] [--from F] [--output-dir DIR] [--unsafe-output-dir] [--force]` | Export cached messages as Markdown |
 | `gmail send --to ADDR --subject S --body-file F [--cc ADDR] [--bcc ADDR] [--body-format FMT] [--dry-run]` | Send an email |
 | `gmail reply --gmail-id ID --body-file F [--to ADDR] [--cc ADDR] [--body-format FMT] [--dry-run]` | Reply to a Gmail thread |
@@ -176,7 +180,7 @@ Headings (H1–H3), bold, italic, bold+italic, inline code, hyperlinks, unordere
 - Retries on transient API errors (HTTP 429 and 5xx) with exponential backoff (1s, 2s, 4s)
 - Gmail cache stored in `data/mail/` by default — excluded from git because it contains private email data
 
-The global `--mail-data-dir` flag overrides the Gmail cache location. The default layout is `data/mail/messages/` for raw `.eml`, `data/mail/markdown/` for exports, and `data/mail/mail.db` for SQLite metadata. `gmail export-md --output-dir` refuses paths outside `data/mail/` unless `--unsafe-output-dir` is set, because exported Markdown contains private email bodies.
+The global `--mail-data-dir` flag overrides the Gmail cache location. The default layout is `data/mail/messages/` for raw `.eml`, `data/mail/markdown/` for exports, and `data/mail/mail.db` for SQLite metadata. `gmail inspect` reads only this cache, including thread summaries only for messages already present locally. `gmail export-md --output-dir` refuses paths outside `data/mail/` unless `--unsafe-output-dir` is set, because exported Markdown contains private email bodies.
 
 ## Documentation
 

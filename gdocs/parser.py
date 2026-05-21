@@ -164,6 +164,10 @@ def build_parser() -> argparse.ArgumentParser:
     _ = gmail_read.add_argument("--index", type=int)
     _ = gmail_read.add_argument("--full", action="store_true")
 
+    gmail_inspect = gmail_subparsers.add_parser("inspect")
+    _ = gmail_inspect.add_argument("--gmail-id", required=True)
+    _ = gmail_inspect.add_argument("--thread", action="store_true")
+
     gmail_export_md = gmail_subparsers.add_parser("export-md")
     _ = gmail_export_md.add_argument("--limit", type=int, default=100)
     _ = gmail_export_md.add_argument("--subject")

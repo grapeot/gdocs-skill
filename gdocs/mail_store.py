@@ -1,3 +1,4 @@
+# pyright: basic
 from __future__ import annotations
 
 """Local Gmail storage: raw .eml files plus SQLite metadata."""
@@ -59,6 +60,18 @@ class StoredMessage:
     labels: list[str]
     mime_path: Path
     downloaded_at: str
+
+
+RFC_THREADING_HEADERS = (
+    "Message-ID",
+    "In-Reply-To",
+    "References",
+    "Subject",
+    "From",
+    "To",
+    "Cc",
+    "Date",
+)
 
 
 class MailStore:
@@ -205,6 +218,38 @@ class MailStore:
             [*params, limit],
         ).fetchall()
         return [self._stored_from_sqlite_row(row) for row in rows]
+
+    def find_thread_messages(self, thread_id: str) -> list[StoredMessage]:
+        rows = self.connection.execute(
+            """
+            SELECT * FROM messages
+            WHERE thread_id = ?
+            ORDER BY sort_timestamp ASC, id ASC
+            """,
+            (thread_id,),
+        ).fetchall()
+        return [self._stored_from_sqlite_row(row) for row in rows]
+
+    def inspect_headers(self, gmail_id: str, include_thread: bool = False) -> dict[str, object]:
+        matches = self.find_messages(gmail_id=gmail_id, limit=1)
+        if not matches:
+            raise ValueError(f"No locally cached Gmail message found for gmail_id: {gmail_id}")
+        message = matches[0]
+        headers, raw_header_text = _inspect_raw_headers(message.mime_path)
+        result: dict[str, object] = {
+            "gmail_id": message.gmail_id,
+            "thread_id": message.thread_id,
+            "subject": message.subject,
+            "headers": headers,
+            "raw_header_text": raw_header_text,
+        }
+        if include_thread:
+            result["thread_messages"] = [
+                _thread_message_headers_json(thread_message)
+                for thread_message in self.find_thread_messages(message.thread_id)
+                if thread_message.mime_path.exists()
+            ]
+        return result
 
     def read_body(self, message: StoredMessage, full: bool = False) -> dict[str, object]:
         raw = message.mime_path.read_bytes()
@@ -364,3 +409,31 @@ def _markdown_document(message: StoredMessage, body: dict[str, object]) -> str:
         f"Date: {message.date}\n\n"
         f"{body.get('body', '')}\n"
     )
+
+
+def _inspect_raw_headers(mime_path: Path) -> tuple[dict[str, str], str]:
+    raw = mime_path.read_bytes()
+    parsed = BytesParser(policy=policy.default).parsebytes(raw, headersonly=True)
+    headers = {name: str(parsed.get(name, "")) for name in RFC_THREADING_HEADERS}
+    return headers, _raw_header_text(raw)
+
+
+def _raw_header_text(raw: bytes) -> str:
+    if b"\r\n\r\n" in raw:
+        header_bytes = raw.split(b"\r\n\r\n", 1)[0]
+    elif b"\n\n" in raw:
+        header_bytes = raw.split(b"\n\n", 1)[0]
+    else:
+        header_bytes = raw
+    return header_bytes.decode("utf-8", errors="replace")
+
+
+def _thread_message_headers_json(message: StoredMessage) -> dict[str, object]:
+    headers, _ = _inspect_raw_headers(message.mime_path)
+    return {
+        "gmail_id": message.gmail_id,
+        "thread_id": message.thread_id,
+        "subject": message.subject,
+        "date": message.date,
+        "headers": headers,
+    }

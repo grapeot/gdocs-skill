@@ -6,6 +6,7 @@ import json
 from unittest.mock import patch
 
 from gdocs.__main__ import DEFAULT_SECRETS_DIR, main
+from gdocs.mail_store import MailStore
 
 
 def test_create_command_outputs_json(capsys):
@@ -343,6 +344,107 @@ def test_gmail_read_lists_matches_when_no_selection(capsys, tmp_path):
     payload = json.loads(capsys.readouterr().out)
     assert payload["match_count"] == 1
     assert payload["matches"][0]["gmail_id"] == "msg-1"
+
+
+def _cache_thread_for_inspection(mail_dir):
+    store = MailStore(mail_dir)
+    try:
+        store.save_message(
+            account="me@example.com",
+            gmail_id="msg-1",
+            thread_id="thr-1",
+            raw_bytes=(
+                b"Message-ID: <m1@example.com>\r\n"
+                b"References: <root@example.com>\r\n"
+                b"Subject: Experiment subject\r\n"
+                b"From: Sender <sender@example.com>\r\n"
+                b"To: Recipient <recipient@example.com>\r\n"
+                b"Cc: Copy <copy@example.com>\r\n"
+                b"Date: Tue, 12 May 2026 12:00:00 -0700\r\n"
+                b"\r\n"
+                b"First body"
+            ),
+            metadata={"label_ids": ["INBOX"]},
+        )
+        store.save_message(
+            account="me@example.com",
+            gmail_id="msg-2",
+            thread_id="thr-1",
+            raw_bytes=(
+                b"Message-ID: <m2@example.com>\r\n"
+                b"In-Reply-To: <m1@example.com>\r\n"
+                b"References: <root@example.com> <m1@example.com>\r\n"
+                b"Subject: Re: Experiment subject\r\n"
+                b"From: Recipient <recipient@example.com>\r\n"
+                b"To: Sender <sender@example.com>\r\n"
+                b"Date: Tue, 12 May 2026 12:05:00 -0700\r\n"
+                b"\r\n"
+                b"Second body"
+            ),
+            metadata={"label_ids": ["INBOX"]},
+        )
+    finally:
+        store.close()
+
+
+def test_gmail_inspect_reads_local_headers_without_gmail_api(capsys, tmp_path):
+    mail_dir = tmp_path / "mail"
+    _cache_thread_for_inspection(mail_dir)
+
+    with patch("gdocs.__main__.GmailClient") as gmail_cls:
+        gmail_cls.side_effect = AssertionError("inspect should not build GmailClient")
+
+        code = main([
+            "--mail-data-dir",
+            str(mail_dir),
+            "gmail",
+            "inspect",
+            "--gmail-id",
+            "msg-1",
+            "--thread",
+        ])
+
+    assert code == 0
+    gmail_cls.assert_not_called()
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["gmail_id"] == "msg-1"
+    assert payload["thread_id"] == "thr-1"
+    assert payload["subject"] == "Experiment subject"
+    assert payload["headers"] == {
+        "Message-ID": "<m1@example.com>",
+        "In-Reply-To": "",
+        "References": "<root@example.com>",
+        "Subject": "Experiment subject",
+        "From": "Sender <sender@example.com>",
+        "To": "Recipient <recipient@example.com>",
+        "Cc": "Copy <copy@example.com>",
+        "Date": "Tue, 12 May 2026 12:00:00 -0700",
+    }
+    assert payload["raw_header_text"].startswith("Message-ID: <m1@example.com>\r\n")
+    assert [message["gmail_id"] for message in payload["thread_messages"]] == ["msg-1", "msg-2"]
+    assert payload["thread_messages"][1]["headers"]["In-Reply-To"] == "<m1@example.com>"
+
+
+def test_gmail_inspect_missing_local_message_fails_without_gmail_api(capsys, tmp_path):
+    with patch("gdocs.__main__.GmailClient") as gmail_cls:
+        gmail_cls.side_effect = AssertionError("inspect should not build GmailClient")
+
+        code = main([
+            "--mail-data-dir",
+            str(tmp_path / "mail"),
+            "gmail",
+            "inspect",
+            "--gmail-id",
+            "missing-msg",
+        ])
+
+    assert code == 1
+    gmail_cls.assert_not_called()
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    payload = json.loads(captured.err)
+    assert payload["type"] == "ValueError"
+    assert payload["error"] == "No locally cached Gmail message found for gmail_id: missing-msg"
 
 
 def test_gmail_archive_dry_run(capsys, tmp_path):

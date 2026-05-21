@@ -2,6 +2,12 @@
 
 ## Changelog
 
+### 2026-05-20
+
+- Added `python -m gdocs gmail inspect --gmail-id ID [--thread]` for local-cache Gmail header inspection. The command parses the cached raw `.eml`, returns the threading header subset plus `raw_header_text`, and never initializes the Gmail API client.
+- Added local same-thread summaries for cached messages with the same `thread_id`; missing server messages are intentionally not fetched.
+- Added unit tests for the happy path and missing local message error path.
+
 ### 2026-05-12 (later)
 
 - Added Google Calendar CLI commands: `create-event`, `update-event`, `delete-event`, `list-events` under `python -m gdocs calendar ...`.
