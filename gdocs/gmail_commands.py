@@ -17,10 +17,30 @@ def run_gmail_command(
     gmail_client_cls: type[GmailClient],
     mail_store_cls: type[MailStore],
 ) -> object:
-    gmail = gmail_client_cls(secrets_dir=secrets_dir)
+    command = str(data["gmail_command"])
     store = mail_store_cls(data_dir)
     try:
-        command = str(data["gmail_command"])
+        if command == "list-local":
+            return [_stored_message_json(item) for item in store.list_messages(limit=_int_arg(data, "limit"))]
+        if command == "read":
+            return _gmail_read(store, data)
+        if command == "inspect":
+            return store.inspect_headers(
+                gmail_id=str(data["gmail_id"]),
+                include_thread=bool(data.get("thread", False)),
+            )
+        if command == "export-md":
+            return {
+                "exported": store.export_markdown(
+                    output_dir=cast(Path | None, data.get("output_dir")) if isinstance(data.get("output_dir"), Path) else None,
+                    allow_unsafe_output_dir=bool(data.get("unsafe_output_dir", False)),
+                    force=bool(data.get("force", False)),
+                    limit=_int_arg(data, "limit"),
+                    subject=str(data["subject"]) if data.get("subject") else None,
+                    from_filter=str(data["from_filter"]) if data.get("from_filter") else None,
+                )
+            }
+        gmail = gmail_client_cls(secrets_dir=secrets_dir)
         if command == "profile":
             return gmail.get_profile()
         if command == "download":
@@ -33,21 +53,6 @@ def run_gmail_command(
                 max_results=_int_arg(data, "limit"),
                 include_spam_trash=bool(data.get("include_spam_trash", False)),
             )
-        if command == "list-local":
-            return [_stored_message_json(item) for item in store.list_messages(limit=_int_arg(data, "limit"))]
-        if command == "read":
-            return _gmail_read(store, data)
-        if command == "export-md":
-            return {
-                "exported": store.export_markdown(
-                    output_dir=cast(Path | None, data.get("output_dir")) if isinstance(data.get("output_dir"), Path) else None,
-                    allow_unsafe_output_dir=bool(data.get("unsafe_output_dir", False)),
-                    force=bool(data.get("force", False)),
-                    limit=_int_arg(data, "limit"),
-                    subject=str(data["subject"]) if data.get("subject") else None,
-                    from_filter=str(data["from_filter"]) if data.get("from_filter") else None,
-                )
-            }
         if command == "send":
             body_path = _path_arg(data, "body_file")
             return gmail.send_message(
