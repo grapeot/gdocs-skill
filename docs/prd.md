@@ -102,6 +102,7 @@ The Gmail pipeline covers server-side search, local download, local read/export,
 | `gmail search` | Server-side search with native Gmail query syntax |
 | `gmail list-local` | List messages in the local SQLite cache |
 | `gmail read` | Read a cached message body, truncated at 10,000 chars unless `--full` is used |
+| `gmail inspect` | Inspect cached raw `.eml` headers for threading experiments without Gmail API calls |
 | `gmail export-md` | Export cached messages as Markdown files with YAML front matter |
 | `gmail send` | Send an email via the Gmail API |
 | `gmail reply` | Reply to an existing thread using `In-Reply-To`, `References`, and Gmail `threadId` |
@@ -122,7 +123,7 @@ data/mail/
 └── mail.db            # SQLite metadata index
 ```
 
-The SQLite index supports local filtering by Gmail ID, subject, and sender. Raw `.eml` files preserve MIME content. Messages are deduplicated by `gmail_id` during download. The global `--mail-data-dir` flag overrides the cache location. Markdown exports default to `data/mail/markdown/`; export paths outside `data/mail/` require `--unsafe-output-dir` because they contain private email bodies.
+The SQLite index supports local filtering by Gmail ID, subject, sender, and thread ID. Raw `.eml` files preserve MIME content. `gmail inspect --gmail-id ID [--thread]` parses the cached raw headers and, when requested, reports only same-thread messages already present locally. Messages are deduplicated by `gmail_id` during download. The global `--mail-data-dir` flag overrides the cache location. Markdown exports default to `data/mail/markdown/`; export paths outside `data/mail/` require `--unsafe-output-dir` because they contain private email bodies.
 
 Gmail uses labels rather than folders. Archive removes the `INBOX` label rather than moving the message. User labels and system labels such as `INBOX`, `UNREAD`, `STARRED`, `IMPORTANT`, `SENT`, `DRAFT`, `TRASH`, `SPAM`, and `CATEGORY_*` can be resolved by name or ID.
 

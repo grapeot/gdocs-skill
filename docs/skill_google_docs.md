@@ -4,7 +4,7 @@ CLI tool for operating on Google Docs, Gmail, and Google Calendar via the offici
 
 - **Type**: API Guide
 - **Project**: `adhoc_jobs/gdocs_skill/`
-- **Updated**: 2026-05-12
+- **Updated**: 2026-05-20
 
 ## When to Use
 
@@ -17,6 +17,7 @@ The user says anything implying a Google Docs operation:
 - "What comments are on ..." / "Reply to that comment" / "Resolve it"
 - "Add a tab" / "Rename the tab" / "Add an image to the doc"
 - "Download recent email" / "Search Gmail for ..." / "Read this email"
+- "Inspect this Gmail message header" / "Look at cached threading headers"
 - "Send an email" / "Reply to this thread"
 - "Archive this message" / "Mark as read" / "Apply this Gmail label"
 - "Schedule a meeting" / "Create a calendar event" / "Invite ... to a call"
@@ -46,9 +47,9 @@ If any of these fail, the command did not succeed. Do not assume success without
 
 ## Prerequisites
 
-`secrets/credentials.json` must exist. If missing, guide the user through OAuth setup (steps in the repo `README.md`). On first run, a browser opens for Google authorization; after that, `secrets/token.json` persists the session.
+API-backed Docs, Gmail, and Calendar commands require `secrets/credentials.json`. If missing, guide the user through OAuth setup (steps in the repo `README.md`). Local Gmail cache commands can run with only `data/mail/`. On first OAuth run, a browser opens for Google authorization; after that, `secrets/token.json` persists the session.
 
-Gmail commands require the `https://www.googleapis.com/auth/gmail.modify` scope; Calendar commands require `https://www.googleapis.com/auth/calendar.events`. Auth now checks that the stored token covers every required scope and forces reauthorization when it doesn't — so the first Gmail or Calendar command on an older token will open the OAuth browser flow automatically. If that flow fails, delete `secrets/token.json` and rerun. One token then covers Docs, Drive file access, Gmail, and Calendar.
+Gmail API commands require the `https://www.googleapis.com/auth/gmail.modify` scope; Calendar commands require `https://www.googleapis.com/auth/calendar.events`. Local Gmail cache commands such as `list-local`, `read`, `inspect`, and `export-md` read `data/mail/` directly and do not fetch missing messages. Auth now checks that the stored token covers every required scope and forces reauthorization when it doesn't — so the first API-backed Gmail or Calendar command on an older token will open the OAuth browser flow automatically. If that flow fails, delete `secrets/token.json` and rerun. One token then covers Docs, Drive file access, Gmail, and Calendar.
 
 ## CLI Reference
 
@@ -154,11 +155,15 @@ python -m gdocs gmail search "subject:meeting newer_than:7d"
 python -m gdocs gmail search "is:unread" --limit 50
 # Output: [{"gmail_id": "...", "thread_id": "..."}, ...]
 
-# List and read locally cached messages
+# List, read, and inspect locally cached messages
 python -m gdocs gmail list-local --limit 10
 python -m gdocs gmail read --latest
 python -m gdocs gmail read --index 0 --full
 python -m gdocs gmail read --gmail-id MSG_ID
+python -m gdocs gmail inspect --gmail-id MSG_ID
+python -m gdocs gmail inspect --gmail-id MSG_ID --thread
+# Inspect output includes gmail_id, thread_id, subject, headers, and raw_header_text.
+# --thread adds locally cached same-thread messages only; it never fetches missing messages.
 
 # Export cached messages as Markdown
 python -m gdocs gmail export-md --limit 50
@@ -188,6 +193,7 @@ Key semantics:
 - `label` accepts system label names (`INBOX`, `UNREAD`, `STARRED`, etc.), raw label IDs, or user label names.
 - `--body-format` accepts `text`, `html`, `markdown`, or `md`. Markdown is sent as plain text.
 - `--dry-run` is available on Gmail send, reply, archive, trash, mark-read, mark-unread, label apply, and label remove.
+- `inspect` parses the cached raw `.eml` for `Message-ID`, `In-Reply-To`, `References`, `Subject`, `From`, `To`, `Cc`, and `Date`, plus `raw_header_text` for direct experiment comparison. With `--thread`, it lists only same-thread messages already in SQLite and `messages/`.
 - `export-md --output-dir` refuses paths outside `data/mail/` unless `--unsafe-output-dir` is set. Treat exported Markdown as private email data.
 
 ### Calendar Commands
@@ -288,6 +294,8 @@ These are real failure patterns encountered in production:
 **Gmail/Calendar token reauthorization.** Adding a new scope to an existing token used to surface as an auth error on the first command. The auth module now compares stored scopes against `SCOPES` and reruns the OAuth flow when a scope is missing, so the first Gmail or Calendar command on an old token simply opens the browser. If the auto-flow fails, delete `secrets/token.json` and re-run.
 
 **Gmail download deduplication.** `gmail download` skips messages whose `gmail_id` already exists in the local store. Re-running the same query fetches only new messages.
+
+**Gmail inspect is cache-only.** `gmail inspect --gmail-id ID [--thread]` opens the local SQLite index and cached `.eml` file. It does not initialize the Gmail API client and will fail if the message is missing locally.
 
 **Gmail send is final.** `--dry-run` prints what would be sent without calling the API. Without `--dry-run`, Gmail sends the message.
 
