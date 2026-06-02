@@ -245,6 +245,44 @@ class GmailClient:
         except HttpError as exc:
             raise RuntimeError(_http_error_message("Failed to send Gmail message", exc)) from exc
 
+    def create_draft(
+        self,
+        *,
+        to: list[str] | None = None,
+        subject: str,
+        body_text: str,
+        body_format: str = "text",
+        cc: list[str] | None = None,
+        bcc: list[str] | None = None,
+    ) -> dict[str, object]:
+        message = _build_email_message(
+            to=to or [],
+            subject=subject,
+            body_text=body_text,
+            body_format=body_format,
+            cc=cc or [],
+            bcc=bcc or [],
+            allow_empty_to=True,
+        )
+        payload = {"message": {"raw": _base64url_encode(message.as_bytes())}}
+        try:
+            draft = _retry_transient(
+                lambda: self.gmail.users().drafts().create(userId="me", body=payload).execute()
+            )
+            draft_message = draft.get("message", {})
+            return {
+                "draft_id": draft.get("id", ""),
+                "gmail_id": draft_message.get("id", ""),
+                "thread_id": draft_message.get("threadId", ""),
+                "to": to or [],
+                "cc": cc or [],
+                "bcc": bcc or [],
+                "subject": subject,
+                "sent": False,
+            }
+        except HttpError as exc:
+            raise RuntimeError(_http_error_message("Failed to create Gmail draft", exc)) from exc
+
     def reply_message(
         self,
         *,
@@ -369,13 +407,15 @@ def _build_email_message(
     body_format: str,
     cc: list[str],
     bcc: list[str],
+    allow_empty_to: bool = False,
 ) -> EmailMessage:
-    if not to:
+    if not to and not allow_empty_to:
         raise ValueError("At least one recipient is required")
     message = EmailMessage()
     subtype = "html" if body_format == "html" else "plain"
     message.set_content(body_text, subtype=subtype)
-    message["To"] = ", ".join(to)
+    if to:
+        message["To"] = ", ".join(to)
     if cc:
         message["Cc"] = ", ".join(cc)
     if bcc:

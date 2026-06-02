@@ -282,6 +282,37 @@ def test_gmail_send_dry_run_reads_body_file(capsys, tmp_path):
     assert json.loads(capsys.readouterr().out) == {"dry_run": True, "sent": False}
 
 
+def test_gmail_draft_reads_body_file_without_recipient(capsys, tmp_path):
+    body_path = tmp_path / "body.txt"
+    body_path.write_text("Hello", encoding="utf-8")
+    with patch("gdocs.__main__.GmailClient") as gmail_cls, patch("gdocs.__main__.MailStore") as store_cls:
+        gmail = gmail_cls.return_value
+        gmail.create_draft.return_value = {"draft_id": "draft-1", "sent": False}
+
+        code = main([
+            "--mail-data-dir",
+            str(tmp_path / "mail"),
+            "gmail",
+            "draft",
+            "--subject",
+            "Hello",
+            "--body-file",
+            str(body_path),
+        ])
+
+    assert code == 0
+    gmail.create_draft.assert_called_once_with(
+        to=[],
+        cc=[],
+        bcc=[],
+        subject="Hello",
+        body_text="Hello",
+        body_format="text",
+    )
+    store_cls.return_value.close.assert_called_once_with()
+    assert json.loads(capsys.readouterr().out) == {"draft_id": "draft-1", "sent": False}
+
+
 def test_gmail_search_resolves_labels(capsys, tmp_path):
     with patch("gdocs.__main__.GmailClient") as gmail_cls, patch("gdocs.__main__.MailStore"):
         gmail = gmail_cls.return_value
