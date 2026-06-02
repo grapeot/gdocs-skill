@@ -2,6 +2,12 @@
 
 ## Changelog
 
+### 2026-06-02
+
+- Added `python -m gdocs gmail draft --subject S --body-file F` for creating Gmail drafts without sending.
+- Made draft recipients optional so agents can save no-recipient drafts for human review.
+- Added unit coverage for no-recipient drafts, recipient headers, and CLI body-file dispatch.
+
 ### 2026-05-20
 
 - Added `python -m gdocs gmail inspect --gmail-id ID [--thread]` for local-cache Gmail header inspection. The command parses the cached raw `.eml`, returns the threading header subset plus `raw_header_text`, and never initializes the Gmail API client.

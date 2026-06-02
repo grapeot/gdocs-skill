@@ -170,7 +170,9 @@ python -m gdocs gmail export-md --limit 50
 python -m gdocs gmail export-md --subject "budget" --force
 python -m gdocs gmail export-md --output-dir data/mail/custom_exports
 
-# Send and reply. Use --dry-run before real sends.
+# Draft, send, and reply. Use --dry-run before real sends.
+python -m gdocs gmail draft --subject "Hello" --body-file body.md
+python -m gdocs gmail draft --to user@example.com --subject "Hello" --body-file body.md
 python -m gdocs gmail send --to user@example.com --subject "Hello" --body-file body.md --dry-run
 python -m gdocs gmail send --to user@example.com --cc reviewer@example.com --subject "Status" --body-file report.html --body-format html
 python -m gdocs gmail reply --gmail-id MSG_ID --body-file reply.md --dry-run
@@ -192,6 +194,7 @@ Key semantics:
 - `trash` calls Gmail's recoverable trash endpoint.
 - `label` accepts system label names (`INBOX`, `UNREAD`, `STARRED`, etc.), raw label IDs, or user label names.
 - `--body-format` accepts `text`, `html`, `markdown`, or `md`. Markdown is sent as plain text.
+- `draft` creates a Gmail draft and never sends. `--to`, `--cc`, and `--bcc` are optional so agents can save no-recipient drafts for human review.
 - `--dry-run` is available on Gmail send, reply, archive, trash, mark-read, mark-unread, label apply, and label remove.
 - `inspect` parses the cached raw `.eml` for `Message-ID`, `In-Reply-To`, `References`, `Subject`, `From`, `To`, `Cc`, and `Date`, plus `raw_header_text` for direct experiment comparison. With `--thread`, it lists only same-thread messages already in SQLite and `messages/`.
 - `export-md --output-dir` refuses paths outside `data/mail/` unless `--unsafe-output-dir` is set. Treat exported Markdown as private email data.

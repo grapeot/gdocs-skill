@@ -64,6 +64,16 @@ def run_gmail_command(
                 body_format=_normalize_body_format(str(data["body_format"])),
                 dry_run=bool(data.get("dry_run", False)),
             )
+        if command == "draft":
+            body_path = _path_arg(data, "body_file")
+            return gmail.create_draft(
+                to=_list_arg(data.get("to")),
+                cc=_list_arg(data.get("cc")),
+                bcc=_list_arg(data.get("bcc")),
+                subject=str(data["subject"]),
+                body_text=body_path.read_text(encoding="utf-8"),
+                body_format=_normalize_body_format(str(data["body_format"])),
+            )
         if command == "reply":
             body_path = _path_arg(data, "body_file")
             return gmail.reply_message(
@@ -212,4 +222,3 @@ def _normalize_body_format(value: str) -> str:
     if value == "markdown":
         return "text"
     return value
-

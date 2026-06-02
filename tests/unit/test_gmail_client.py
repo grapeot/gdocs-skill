@@ -125,6 +125,44 @@ def test_send_message_calls_gmail_api(tmp_path):
     assert b"Subject: Hello" in decoded
 
 
+def test_create_draft_allows_no_recipient(tmp_path):
+    client, _, users = _client(tmp_path)
+    users.drafts.return_value.create.return_value.execute.return_value = {
+        "id": "draft-1",
+        "message": {"id": "msg-1", "threadId": "thr-1"},
+    }
+
+    result = client.create_draft(subject="Hello", body_text="Body")
+
+    assert result["draft_id"] == "draft-1"
+    assert result["sent"] is False
+    body = users.drafts.return_value.create.call_args.kwargs["body"]
+    decoded = base64.urlsafe_b64decode(body["message"]["raw"].encode("ascii"))
+    assert b"Subject: Hello" in decoded
+    assert b"To:" not in decoded
+
+
+def test_create_draft_sets_recipients(tmp_path):
+    client, _, users = _client(tmp_path)
+    users.drafts.return_value.create.return_value.execute.return_value = {
+        "id": "draft-1",
+        "message": {"id": "msg-1", "threadId": "thr-1"},
+    }
+
+    result = client.create_draft(
+        to=["recipient@example.com"],
+        cc=["copy@example.com"],
+        subject="Hello",
+        body_text="Body",
+    )
+
+    assert result["to"] == ["recipient@example.com"]
+    body = users.drafts.return_value.create.call_args.kwargs["body"]
+    decoded = base64.urlsafe_b64decode(body["message"]["raw"].encode("ascii"))
+    assert b"To: recipient@example.com" in decoded
+    assert b"Cc: copy@example.com" in decoded
+
+
 def test_reply_message_sets_threading_headers(tmp_path):
     client, _, users = _client(tmp_path)
     users.messages.return_value.get.return_value.execute.return_value = {

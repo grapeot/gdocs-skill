@@ -10,7 +10,7 @@ CLI tool for Google Docs, Gmail, and Calendar automation via the official Python
 - Insert local images into documents
 - List, reply to, and resolve comments
 - Full tab management: list, add, rename, replace content
-- Download, search, read, export, inspect cached headers, send, reply to, archive, trash, and label Gmail messages
+- Download, search, read, export, inspect cached headers, draft, send, reply to, archive, trash, and label Gmail messages
 - Create Calendar events with invites and list upcoming Calendar events
 
 ## Quick install
@@ -118,6 +118,7 @@ python -m gdocs gmail search "from:user@example.com newer_than:7d"
 python -m gdocs gmail inspect --gmail-id MSG_ID --thread
 
 # Send an email; use --dry-run first when testing
+python -m gdocs gmail draft --subject "Hello" --body-file body.md
 python -m gdocs gmail send --to user@example.com --subject "Hello" --body-file body.md --dry-run
 
 # Create a Calendar event and invite attendees
@@ -154,6 +155,7 @@ python -m gdocs calendar list-events --time-min "2026-05-20T00:00:00-07:00" --ti
 | `gmail read [--gmail-id ID] [--subject S] [--from F] [--latest] [--index N] [--full]` | Read a cached message body |
 | `gmail inspect --gmail-id ID [--thread]` | Inspect cached raw `.eml` RFC headers for threading experiments without Gmail API calls |
 | `gmail export-md [--limit N] [--subject S] [--from F] [--output-dir DIR] [--unsafe-output-dir] [--force]` | Export cached messages as Markdown |
+| `gmail draft [--to ADDR] --subject S --body-file F [--cc ADDR] [--bcc ADDR] [--body-format FMT]` | Create a Gmail draft without sending |
 | `gmail send --to ADDR --subject S --body-file F [--cc ADDR] [--bcc ADDR] [--body-format FMT] [--dry-run]` | Send an email |
 | `gmail reply --gmail-id ID --body-file F [--to ADDR] [--cc ADDR] [--body-format FMT] [--dry-run]` | Reply to a Gmail thread |
 | `gmail archive GMAIL_ID [--dry-run]` | Remove the `INBOX` label |

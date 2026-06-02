@@ -185,6 +185,14 @@ def build_parser() -> argparse.ArgumentParser:
     _ = gmail_send.add_argument("--body-format", choices=["text", "html", "markdown", "md"], default="text")
     _ = gmail_send.add_argument("--dry-run", action="store_true")
 
+    gmail_draft = gmail_subparsers.add_parser("draft")
+    _ = gmail_draft.add_argument("--to", action="append")
+    _ = gmail_draft.add_argument("--cc", action="append")
+    _ = gmail_draft.add_argument("--bcc", action="append")
+    _ = gmail_draft.add_argument("--subject", required=True)
+    _ = gmail_draft.add_argument("--body-file", type=Path, required=True)
+    _ = gmail_draft.add_argument("--body-format", choices=["text", "html", "markdown", "md"], default="text")
+
     gmail_reply = gmail_subparsers.add_parser("reply")
     _ = gmail_reply.add_argument("--gmail-id", required=True)
     _ = gmail_reply.add_argument("--body-file", type=Path, required=True)
@@ -237,4 +245,3 @@ def build_parser() -> argparse.ArgumentParser:
     _ = calendar_list.add_argument("--max-results", type=int, default=10)
 
     return parser
-
