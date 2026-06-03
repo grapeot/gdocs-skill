@@ -63,6 +63,7 @@ def run_gmail_command(
                 body_text=body_path.read_text(encoding="utf-8"),
                 body_format=_normalize_body_format(str(data["body_format"])),
                 dry_run=bool(data.get("dry_run", False)),
+                attachments=_path_list(data.get("attach")),
             )
         if command == "draft":
             body_path = _path_arg(data, "body_file")
@@ -73,6 +74,7 @@ def run_gmail_command(
                 subject=str(data["subject"]),
                 body_text=body_path.read_text(encoding="utf-8"),
                 body_format=_normalize_body_format(str(data["body_format"])),
+                attachments=_path_list(data.get("attach")),
             )
         if command == "reply":
             body_path = _path_arg(data, "body_file")
@@ -83,6 +85,7 @@ def run_gmail_command(
                 to=_list_arg(data.get("to")) or None,
                 cc=_list_arg(data.get("cc")),
                 dry_run=bool(data.get("dry_run", False)),
+                attachments=_path_list(data.get("attach")),
             )
         if command == "archive":
             return gmail.archive_message(str(data["gmail_id"]), dry_run=bool(data.get("dry_run", False)))
@@ -199,6 +202,14 @@ def _path_arg(data: dict[str, object], key: str) -> Path:
     if isinstance(value, Path):
         return value
     return Path(str(value))
+
+
+def _path_list(value: object) -> list[Path] | None:
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return [Path(str(item)) for item in value]
+    return [Path(str(value))]
 
 
 def _stored_message_json(message: StoredMessage) -> dict[str, object]:

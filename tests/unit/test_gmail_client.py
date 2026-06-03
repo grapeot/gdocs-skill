@@ -220,3 +220,50 @@ def test_resolve_label_id_uses_label_list(tmp_path):
     }
 
     assert client.resolve_label_id("Project") == "Label_123"
+
+
+def test_create_draft_with_attachments(tmp_path):
+    client, _, users = _client(tmp_path)
+    users.drafts.return_value.create.return_value.execute.return_value = {
+        "id": "draft-1",
+        "message": {"id": "msg-1", "threadId": "thr-1"},
+    }
+    pdf_path = tmp_path / "invoice.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4 fake pdf")
+
+    result = client.create_draft(
+        to=["recipient@example.com"],
+        subject="Hello",
+        body_text="Body",
+        attachments=[pdf_path],
+    )
+
+    assert result["draft_id"] == "draft-1"
+    assert result["attachment_count"] == 1
+    assert result["attachments"] == [{"name": "invoice.pdf", "size": pdf_path.stat().st_size}]
+    body = users.drafts.return_value.create.call_args.kwargs["body"]
+    decoded = base64.urlsafe_b64decode(body["message"]["raw"].encode("ascii"))
+    assert b"invoice.pdf" in decoded
+    assert b"application/pdf" in decoded or b"%PDF" in decoded
+
+
+def test_send_message_with_attachments(tmp_path):
+    client, _, users = _client(tmp_path)
+    users.messages.return_value.send.return_value.execute.return_value = {
+        "id": "sent-1",
+        "threadId": "thr-1",
+    }
+    pdf_path = tmp_path / "report.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4 fake pdf")
+
+    result = client.send_message(
+        to=["recipient@example.com"],
+        subject="Report",
+        body_text="Here is the report",
+        attachments=[pdf_path],
+    )
+
+    assert result["sent"] is True
+    body = users.messages.return_value.send.call_args.kwargs["body"]
+    decoded = base64.urlsafe_b64decode(body["raw"].encode("ascii"))
+    assert b"report.pdf" in decoded

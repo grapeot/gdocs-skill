@@ -277,6 +277,7 @@ def test_gmail_send_dry_run_reads_body_file(capsys, tmp_path):
         body_text="Hello",
         body_format="text",
         dry_run=True,
+        attachments=None,
     )
     store_cls.return_value.close.assert_called_once_with()
     assert json.loads(capsys.readouterr().out) == {"dry_run": True, "sent": False}
@@ -308,6 +309,7 @@ def test_gmail_draft_reads_body_file_without_recipient(capsys, tmp_path):
         subject="Hello",
         body_text="Hello",
         body_format="text",
+        attachments=None,
     )
     store_cls.return_value.close.assert_called_once_with()
     assert json.loads(capsys.readouterr().out) == {"draft_id": "draft-1", "sent": False}

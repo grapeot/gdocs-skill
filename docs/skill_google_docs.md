@@ -173,9 +173,12 @@ python -m gdocs gmail export-md --output-dir data/mail/custom_exports
 # Draft, send, and reply. Use --dry-run before real sends.
 python -m gdocs gmail draft --subject "Hello" --body-file body.md
 python -m gdocs gmail draft --to user@example.com --subject "Hello" --body-file body.md
+python -m gdocs gmail draft --to user@example.com --subject "Invoice" --body-file body.md --attach invoice.pdf
 python -m gdocs gmail send --to user@example.com --subject "Hello" --body-file body.md --dry-run
 python -m gdocs gmail send --to user@example.com --cc reviewer@example.com --subject "Status" --body-file report.html --body-format html
+python -m gdocs gmail send --to user@example.com --subject "Report" --body-file body.md --attach report.pdf
 python -m gdocs gmail reply --gmail-id MSG_ID --body-file reply.md --dry-run
+python -m gdocs gmail reply --gmail-id MSG_ID --body-file reply.md --attach chart.png
 
 # Message state
 python -m gdocs gmail archive GMAIL_ID
@@ -195,6 +198,7 @@ Key semantics:
 - `label` accepts system label names (`INBOX`, `UNREAD`, `STARRED`, etc.), raw label IDs, or user label names.
 - `--body-format` accepts `text`, `html`, `markdown`, or `md`. Markdown is sent as plain text.
 - `draft` creates a Gmail draft and never sends. `--to`, `--cc`, and `--bcc` are optional so agents can save no-recipient drafts for human review.
+- `--attach` accepts one or more file paths and is supported by `draft`, `send`, and `reply`. Each file is inline-attached with auto-detected MIME type. The output includes `attachment_count` and per-file `name`/`size`. This is equivalent to `mail draft --attach` in Outlook Skill.
 - `--dry-run` is available on Gmail send, reply, archive, trash, mark-read, mark-unread, label apply, and label remove.
 - `inspect` parses the cached raw `.eml` for `Message-ID`, `In-Reply-To`, `References`, `Subject`, `From`, `To`, `Cc`, and `Date`, plus `raw_header_text` for direct experiment comparison. With `--thread`, it lists only same-thread messages already in SQLite and `messages/`.
 - `export-md --output-dir` refuses paths outside `data/mail/` unless `--unsafe-output-dir` is set. Treat exported Markdown as private email data.
