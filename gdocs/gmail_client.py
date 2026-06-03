@@ -3,6 +3,7 @@ from __future__ import annotations
 """Gmail API client: direct SDK wrapper."""
 
 import base64
+import mimetypes
 from email import policy
 from email.message import EmailMessage
 from email.parser import BytesParser
@@ -211,6 +212,7 @@ class GmailClient:
         cc: list[str] | None = None,
         bcc: list[str] | None = None,
         dry_run: bool = False,
+        attachments: list[Path] | None = None,
     ) -> dict[str, object]:
         message = _build_email_message(
             to=to,
@@ -219,6 +221,7 @@ class GmailClient:
             body_format=body_format,
             cc=cc or [],
             bcc=bcc or [],
+            attachments=attachments,
         )
         payload = {"raw": _base64url_encode(message.as_bytes())}
         if dry_run:
@@ -254,6 +257,7 @@ class GmailClient:
         body_format: str = "text",
         cc: list[str] | None = None,
         bcc: list[str] | None = None,
+        attachments: list[Path] | None = None,
     ) -> dict[str, object]:
         message = _build_email_message(
             to=to or [],
@@ -263,6 +267,7 @@ class GmailClient:
             cc=cc or [],
             bcc=bcc or [],
             allow_empty_to=True,
+            attachments=attachments,
         )
         payload = {"message": {"raw": _base64url_encode(message.as_bytes())}}
         try:
@@ -279,6 +284,8 @@ class GmailClient:
                 "bcc": bcc or [],
                 "subject": subject,
                 "sent": False,
+                "attachment_count": len(attachments) if attachments else 0,
+                "attachments": [{"name": p.name, "size": p.stat().st_size} for p in (attachments or [])],
             }
         except HttpError as exc:
             raise RuntimeError(_http_error_message("Failed to create Gmail draft", exc)) from exc
@@ -292,6 +299,7 @@ class GmailClient:
         to: list[str] | None = None,
         cc: list[str] | None = None,
         dry_run: bool = False,
+        attachments: list[Path] | None = None,
     ) -> dict[str, object]:
         original = self.get_message_metadata(gmail_id)
         subject = str(original.get("subject") or "")
@@ -304,6 +312,7 @@ class GmailClient:
             body_format=body_format,
             cc=cc or [],
             bcc=[],
+            attachments=attachments,
         )
         message_id = str(original.get("message_id") or "")
         references = str(original.get("references") or "")
@@ -408,6 +417,7 @@ def _build_email_message(
     cc: list[str],
     bcc: list[str],
     allow_empty_to: bool = False,
+    attachments: list[Path] | None = None,
 ) -> EmailMessage:
     if not to and not allow_empty_to:
         raise ValueError("At least one recipient is required")
@@ -421,4 +431,17 @@ def _build_email_message(
     if bcc:
         message["Bcc"] = ", ".join(bcc)
     message["Subject"] = subject
+    for att_path in attachments or []:
+        filename = att_path.name
+        mime_type, _ = mimetypes.guess_type(str(att_path), strict=False)
+        if mime_type is None:
+            mime_type = "application/octet-stream"
+        main_type, sub_type = mime_type.split("/", 1)
+        data = att_path.read_bytes()
+        message.add_attachment(
+            data,
+            maintype=main_type,
+            subtype=sub_type,
+            filename=filename,
+        )
     return message
