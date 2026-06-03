@@ -94,6 +94,10 @@ def build_parser() -> argparse.ArgumentParser:
     tab_list_parser = tab_subparsers.add_parser("list")
     _ = tab_list_parser.add_argument("doc_id")
 
+    tab_delete_parser = tab_subparsers.add_parser("delete")
+    _ = tab_delete_parser.add_argument("doc_id")
+    _ = tab_delete_parser.add_argument("tab_id")
+
     tab_add_parser = tab_subparsers.add_parser("add")
     _ = tab_add_parser.add_argument("doc_id")
     _ = tab_add_parser.add_argument("title")

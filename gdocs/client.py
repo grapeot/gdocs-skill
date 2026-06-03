@@ -307,6 +307,17 @@ class GoogleDocsClient:
         except HttpError as exc:
             raise RuntimeError(_http_error_message(f"Failed to list tabs for document '{doc_id}'", exc)) from exc
 
+    def delete_tab(self, doc_id: str, tab_id: str) -> dict[str, object]:
+        """Delete a document tab."""
+        try:
+            self.docs.documents().batchUpdate(
+                documentId=doc_id,
+                body={"requests": [{"deleteTab": {"tabId": tab_id}}]},
+            ).execute()
+            return {"success": True, "doc_id": doc_id, "tab_id": tab_id}
+        except HttpError as exc:
+            raise RuntimeError(_http_error_message(f"Failed to delete tab '{tab_id}' in document '{doc_id}'", exc)) from exc
+
     def add_tab(
         self,
         doc_id: str,

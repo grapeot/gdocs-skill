@@ -199,6 +199,19 @@ def test_tab_list_command(capsys):
     assert out == [{"tab_id": "tab-1", "title": "Overview"}]
 
 
+def test_tab_delete_command(capsys):
+    with patch("gdocs.__main__.GoogleDocsClient") as client_cls:
+        client = client_cls.return_value
+        client.delete_tab.return_value = {"success": True, "doc_id": "doc-12", "tab_id": "tab-12"}
+
+        code = main(["tab", "delete", "doc-12", "tab-12"])
+
+    assert code == 0
+    client.delete_tab.assert_called_once_with("doc-12", "tab-12")
+    out = json.loads(capsys.readouterr().out)
+    assert out == {"success": True, "doc_id": "doc-12", "tab_id": "tab-12"}
+
+
 def test_tab_add_command_no_file(capsys):
     with patch("gdocs.__main__.GoogleDocsClient") as client_cls:
         client = client_cls.return_value

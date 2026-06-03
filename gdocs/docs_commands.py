@@ -177,6 +177,12 @@ def run_docs_command(data: dict[str, object], client: GoogleDocsClient) -> objec
     if command == "tab" and str(data["tab_command"]) == "list":
         return client.list_tabs(str(data["doc_id"]))
 
+    if command == "tab" and str(data["tab_command"]) == "delete":
+        return client.delete_tab(
+            str(data["doc_id"]),
+            str(data["tab_id"]),
+        )
+
     if command == "tab" and str(data["tab_command"]) == "add":
         content = None
         file_path = data.get("file")
