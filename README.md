@@ -142,6 +142,7 @@ python -m gdocs calendar list-events --time-min "2026-05-20T00:00:00-07:00" --ti
 | `link DOC_ID [--public]` | Get the shareable link, optionally enabling public access |
 | `tab list DOC_ID` | List all tabs in a document |
 | `tab add DOC_ID TITLE [FILE] [--format FMT]` | Add a new tab, optionally with content from a file |
+| `tab delete DOC_ID TAB_ID` | Delete a tab |
 | `tab rename DOC_ID TAB_ID NEW_TITLE` | Rename a tab |
 | `tab replace DOC_ID TAB_ID FILE [--format FMT]` | Replace a tab's content from a file |
 | `image DOC_ID IMAGE_PATH [--index N] [--width W] [--tab-id ID]` | Insert a local image |

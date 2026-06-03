@@ -501,6 +501,18 @@ def test_list_tabs_empty(client_env):
     )
 
 
+def test_delete_tab(client_env):
+    client, docs_service, _ = client_env
+    docs_service.documents.return_value.batchUpdate.return_value.execute.return_value = {}
+
+    result = client.delete_tab("doc-1", "tab-delete")
+
+    assert result == {"success": True, "doc_id": "doc-1", "tab_id": "tab-delete"}
+    call = docs_service.documents.return_value.batchUpdate.call_args
+    assert call.kwargs["documentId"] == "doc-1"
+    assert call.kwargs["body"]["requests"] == [{"deleteTab": {"tabId": "tab-delete"}}]
+
+
 def test_add_tab_without_content(client_env):
     client, docs_service, _ = client_env
     docs_service.documents.return_value.batchUpdate.return_value.execute.return_value = {}

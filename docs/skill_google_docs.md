@@ -103,6 +103,7 @@ python -m gdocs link DOC_ID --public
 python -m gdocs tab list DOC_ID               # List all tabs
 python -m gdocs tab add DOC_ID "Title"        # Add empty tab
 python -m gdocs tab add DOC_ID "Title" file.md # Add tab with content
+python -m gdocs tab delete DOC_ID TAB_ID      # Delete a tab
 python -m gdocs tab rename DOC_ID TAB_ID "New" # Rename a tab
 python -m gdocs tab replace DOC_ID TAB_ID file.md  # Replace tab content (default markdown)
 python -m gdocs tab replace DOC_ID TAB_ID file.txt --format plain

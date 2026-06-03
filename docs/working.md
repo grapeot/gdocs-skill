@@ -7,6 +7,9 @@
 - Added `python -m gdocs gmail draft --subject S --body-file F` for creating Gmail drafts without sending.
 - Made draft recipients optional so agents can save no-recipient drafts for human review.
 - Added unit coverage for no-recipient drafts, recipient headers, and CLI body-file dispatch.
+- Added `python -m gdocs tab delete DOC_ID TAB_ID` for removing Google Docs tabs.
+- Added `delete_tab()` to `GoogleDocsClient` using the Docs API `deleteTab` batchUpdate request.
+- Added CLI and client unit tests, plus live smoke verification against a temporary Google Doc.
 
 ### 2026-05-20
 
