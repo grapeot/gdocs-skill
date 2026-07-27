@@ -7,6 +7,7 @@ import mimetypes
 from email import policy
 from email.message import EmailMessage
 from email.parser import BytesParser
+from email.utils import formataddr, getaddresses
 from pathlib import Path
 from typing import Any
 
@@ -298,38 +299,27 @@ class GmailClient:
         body_format: str = "text",
         to: list[str] | None = None,
         cc: list[str] | None = None,
+        reply_all: bool = False,
         dry_run: bool = False,
         attachments: list[Path] | None = None,
     ) -> dict[str, object]:
-        original = self.get_message_metadata(gmail_id)
-        subject = str(original.get("subject") or "")
-        reply_subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
-        recipients = to or [str(original.get("from_addr") or "")]
-        message = _build_email_message(
-            to=recipients,
-            subject=reply_subject,
+        payload, recipients, copies, reply_subject, thread_id = self._build_reply_payload(
+            gmail_id=gmail_id,
             body_text=body_text,
             body_format=body_format,
-            cc=cc or [],
-            bcc=[],
+            to=to,
+            cc=cc,
+            reply_all=reply_all,
             attachments=attachments,
         )
-        message_id = str(original.get("message_id") or "")
-        references = str(original.get("references") or "")
-        if message_id:
-            message["In-Reply-To"] = message_id
-            message["References"] = f"{references} {message_id}".strip()
-        payload = {
-            "raw": _base64url_encode(message.as_bytes()),
-            "threadId": original.get("thread_id", ""),
-        }
         if dry_run:
             return {
                 "dry_run": True,
                 "sent": False,
                 "gmail_id": gmail_id,
-                "thread_id": original.get("thread_id", ""),
+                "thread_id": thread_id,
                 "to": recipients,
+                "cc": copies,
                 "subject": reply_subject,
             }
         try:
@@ -342,10 +332,107 @@ class GmailClient:
                 "gmail_id": sent.get("id", ""),
                 "thread_id": sent.get("threadId", ""),
                 "to": recipients,
+                "cc": copies,
                 "subject": reply_subject,
             }
         except HttpError as exc:
             raise RuntimeError(_http_error_message(f"Failed to reply to Gmail message '{gmail_id}'", exc)) from exc
+
+    def create_reply_draft(
+        self,
+        *,
+        gmail_id: str,
+        body_text: str,
+        body_format: str = "text",
+        to: list[str] | None = None,
+        cc: list[str] | None = None,
+        reply_all: bool = False,
+        attachments: list[Path] | None = None,
+    ) -> dict[str, object]:
+        payload, recipients, copies, reply_subject, thread_id = self._build_reply_payload(
+            gmail_id=gmail_id,
+            body_text=body_text,
+            body_format=body_format,
+            to=to,
+            cc=cc,
+            reply_all=reply_all,
+            attachments=attachments,
+        )
+        try:
+            draft = self.gmail.users().drafts().create(
+                userId="me", body={"message": payload}
+            ).execute()
+            draft_message = draft.get("message", {})
+            return {
+                "operation": "reply_draft",
+                "draft_id": draft.get("id", ""),
+                "gmail_id": draft_message.get("id", ""),
+                "thread_id": draft_message.get("threadId", thread_id),
+                "to": recipients,
+                "cc": copies,
+                "subject": reply_subject,
+                "sent": False,
+                "attachment_count": len(attachments) if attachments else 0,
+                "attachments": [{"name": p.name, "size": p.stat().st_size} for p in (attachments or [])],
+            }
+        except HttpError as exc:
+            raise RuntimeError(
+                _http_error_message(f"Failed to create reply draft for Gmail message '{gmail_id}'", exc)
+            ) from exc
+
+    def _build_reply_payload(
+        self,
+        *,
+        gmail_id: str,
+        body_text: str,
+        body_format: str,
+        to: list[str] | None,
+        cc: list[str] | None,
+        reply_all: bool,
+        attachments: list[Path] | None,
+    ) -> tuple[dict[str, str], list[str], list[str], str, str]:
+        original = self.get_message_metadata(gmail_id)
+        subject = str(original.get("subject") or "")
+        reply_subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
+        default_to = [str(original.get("from_addr") or "")]
+        default_cc: list[str] = []
+        if reply_all:
+            account = str(self.get_profile().get("emailAddress") or "")
+            default_to = _unique_addresses(
+                [str(original.get("from_addr") or ""), str(original.get("to_addr") or "")],
+                exclude={account.lower()},
+            )
+            default_cc = _unique_addresses(
+                [str(original.get("cc_addr") or "")],
+                exclude={account.lower(), *(_address_keys(default_to))},
+            )
+        recipients = _unique_addresses(to, exclude=set()) if to is not None else default_to
+        copies = _unique_addresses(
+            cc if cc is not None else default_cc,
+            exclude=_address_keys(recipients),
+        )
+        message = _build_email_message(
+            to=recipients,
+            subject=reply_subject,
+            body_text=body_text,
+            body_format=body_format,
+            cc=copies,
+            bcc=[],
+            attachments=attachments,
+        )
+        message_id = str(original.get("message_id") or "")
+        references = str(original.get("references") or "")
+        if message_id:
+            message["In-Reply-To"] = message_id
+            message["References"] = f"{references} {message_id}".strip()
+        thread_id = str(original.get("thread_id") or "")
+        return (
+            {"raw": _base64url_encode(message.as_bytes()), "threadId": thread_id},
+            recipients,
+            copies,
+            reply_subject,
+            thread_id,
+        )
 
     def modify_message(
         self,
@@ -445,3 +532,19 @@ def _build_email_message(
             filename=filename,
         )
     return message
+
+
+def _unique_addresses(values: list[str], *, exclude: set[str]) -> list[str]:
+    recipients: list[str] = []
+    seen = {value for value in exclude if value}
+    for name, address in getaddresses(values):
+        key = address.lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        recipients.append(formataddr((name, address)) if name else address)
+    return recipients
+
+
+def _address_keys(values: list[str]) -> set[str]:
+    return {address.lower() for _, address in getaddresses(values) if address}

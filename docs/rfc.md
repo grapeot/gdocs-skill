@@ -236,7 +236,9 @@ Gmail uses labels rather than folders. A message can have multiple labels at onc
 
 ### 8.5 Sending and Replying
 
-`send` composes a MIME message with Python's stdlib `EmailMessage` and sends it through `users.messages.send`. `reply` first fetches original message metadata, sets `In-Reply-To` and `References`, includes the original `threadId` in the API payload, and sends through the same endpoint. This keeps replies attached to the existing Gmail conversation.
+`send` composes a MIME message with Python's stdlib `EmailMessage` and sends it through `users.messages.send`. `reply` first fetches original message metadata, sets `In-Reply-To` and `References`, and includes the original `threadId`. The default path sends through `users.messages.send`; `--draft` instead creates a real in-thread draft through `users.drafts.create` and returns `sent: false`. `--dry-run` performs no write, so it is mutually exclusive with `--draft`.
+
+`--reply-all` derives recipients from the original `From`, `To`, and `Cc` headers, excludes the authenticated Gmail account, and deduplicates addresses while preserving display names. Explicit `--to` or `--cc` values override the corresponding derived list. A standalone new-message draft remains a separate `gmail draft` operation.
 
 Both commands support `--body-format text`, `html`, `markdown`, or `md`. Markdown is treated as plain text; HTML is sent as `text/html`.
 
@@ -245,6 +247,7 @@ Both commands support `--body-format text`, `html`, `markdown`, or `md`. Markdow
 Gmail live tests are opt-in and never run during a normal test invocation:
 
 - `GDOCS_ENABLE_GMAIL_LIVE_TESTS=1` enables the module
+- `GDOCS_GMAIL_LIVE_ALLOW_DRAFT=1` enables the in-thread draft creation test; the test deletes its draft in `finally`
 - `GDOCS_GMAIL_LIVE_ALLOW_SEND=1` enables the test that sends a real email
 - `GDOCS_GMAIL_LIVE_ALLOW_MUTATE=1` enables the archive mutation in that test
 - `GDOCS_GMAIL_LIVE_TEST_TO` optionally overrides the recipient; default is the authenticated account

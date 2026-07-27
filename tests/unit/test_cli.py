@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from unittest.mock import patch
 
+import pytest
+
 from gdocs.__main__ import DEFAULT_SECRETS_DIR, main
 from gdocs.mail_store import MailStore
 
@@ -326,6 +328,67 @@ def test_gmail_draft_reads_body_file_without_recipient(capsys, tmp_path):
     )
     store_cls.return_value.close.assert_called_once_with()
     assert json.loads(capsys.readouterr().out) == {"draft_id": "draft-1", "sent": False}
+
+
+def test_gmail_reply_draft_dispatches_reply_all_without_sending(capsys, tmp_path):
+    body_path = tmp_path / "reply.txt"
+    body_path.write_text("Reply", encoding="utf-8")
+    with patch("gdocs.__main__.GmailClient") as gmail_cls, patch("gdocs.__main__.MailStore") as store_cls:
+        gmail = gmail_cls.return_value
+        gmail.create_reply_draft.return_value = {
+            "operation": "reply_draft",
+            "draft_id": "draft-1",
+            "sent": False,
+        }
+
+        code = main([
+            "--mail-data-dir",
+            str(tmp_path / "mail"),
+            "gmail",
+            "reply",
+            "--gmail-id",
+            "msg-1",
+            "--body-file",
+            str(body_path),
+            "--reply-all",
+            "--draft",
+        ])
+
+    assert code == 0
+    gmail.create_reply_draft.assert_called_once_with(
+        gmail_id="msg-1",
+        body_text="Reply",
+        body_format="text",
+        to=None,
+        cc=None,
+        reply_all=True,
+        attachments=None,
+    )
+    gmail.reply_message.assert_not_called()
+    store_cls.return_value.close.assert_called_once_with()
+    assert json.loads(capsys.readouterr().out)["sent"] is False
+
+
+def test_gmail_reply_rejects_draft_and_dry_run_together(tmp_path):
+    body_path = tmp_path / "reply.txt"
+    body_path.write_text("Reply", encoding="utf-8")
+
+    with patch("gdocs.__main__.GmailClient"), patch("gdocs.__main__.MailStore"):
+        with pytest.raises(SystemExit) as exc:
+            main([
+                "--mail-data-dir",
+                str(tmp_path / "mail"),
+                "gmail",
+                "reply",
+                "--gmail-id",
+                "msg-1",
+                "--body-file",
+                str(body_path),
+                "--draft",
+                "--dry-run",
+            ])
+
+    assert exc.value.code == 2
 
 
 def test_gmail_search_resolves_labels(capsys, tmp_path):

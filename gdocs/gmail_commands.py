@@ -78,14 +78,20 @@ def run_gmail_command(
             )
         if command == "reply":
             body_path = _path_arg(data, "body_file")
+            kwargs = {
+                "gmail_id": str(data["gmail_id"]),
+                "body_text": body_path.read_text(encoding="utf-8"),
+                "body_format": _normalize_body_format(str(data["body_format"])),
+                "to": _list_arg(data.get("to")) or None,
+                "cc": _list_arg(data.get("cc")) or None,
+                "reply_all": bool(data.get("reply_all", False)),
+                "attachments": _path_list(data.get("attach")),
+            }
+            if bool(data.get("draft", False)):
+                return gmail.create_reply_draft(**kwargs)
             return gmail.reply_message(
-                gmail_id=str(data["gmail_id"]),
-                body_text=body_path.read_text(encoding="utf-8"),
-                body_format=_normalize_body_format(str(data["body_format"])),
-                to=_list_arg(data.get("to")) or None,
-                cc=_list_arg(data.get("cc")),
                 dry_run=bool(data.get("dry_run", False)),
-                attachments=_path_list(data.get("attach")),
+                **kwargs,
             )
         if command == "archive":
             return gmail.archive_message(str(data["gmail_id"]), dry_run=bool(data.get("dry_run", False)))

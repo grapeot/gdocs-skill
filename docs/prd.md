@@ -91,7 +91,7 @@ Insert local images (PNG, JPEG, GIF) into a document at a specific character ind
 
 ## Gmail Integration
 
-**Implementation status**: Complete for the first Gmail milestone. The implemented surface covers download, search, local list/read/export, send, reply, archive, trash, read/unread state, and label operations.
+**Implementation status**: Complete for the first Gmail milestone. The implemented surface covers download, search, local list/read/export, standalone and in-thread drafts, send, reply, archive, trash, read/unread state, and label operations.
 
 The Gmail pipeline covers server-side search, local download, local read/export, sending, replying, and message state changes. Gmail commands are grouped under `python -m gdocs gmail ...`. Mutating operations support `--dry-run` where a preview is useful.
 
@@ -105,7 +105,7 @@ The Gmail pipeline covers server-side search, local download, local read/export,
 | `gmail inspect` | Inspect cached raw `.eml` headers for threading experiments without Gmail API calls |
 | `gmail export-md` | Export cached messages as Markdown files with YAML front matter |
 | `gmail send` | Send an email via the Gmail API |
-| `gmail reply` | Reply to an existing thread using `In-Reply-To`, `References`, and Gmail `threadId` |
+| `gmail reply` | Send, preview, or save an in-thread draft using `In-Reply-To`, `References`, and Gmail `threadId`; optional reply-all excludes the authenticated account and deduplicates recipients |
 | `gmail archive` | Remove the `INBOX` label |
 | `gmail trash` | Move a message to Gmail Trash |
 | `gmail mark-read` | Remove the `UNREAD` label |

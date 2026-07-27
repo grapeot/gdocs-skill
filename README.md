@@ -1,4 +1,4 @@
-# Google Docs Skill
+# Google Workspace Skill
 
 CLI tool for Google Docs, Gmail, and Calendar automation via the official Python SDK. All output is JSON — built for both direct use and AI agent consumption.
 
@@ -10,7 +10,7 @@ CLI tool for Google Docs, Gmail, and Calendar automation via the official Python
 - Insert local images into documents
 - List, reply to, and resolve comments
 - Full tab management: list, add, rename, replace content
-- Download, search, read, export, inspect cached headers, draft, send, reply to, archive, trash, and label Gmail messages
+- Download, search, read, export, inspect cached headers, draft, send, reply to, archive, trash, and label Gmail messages, including reply-all drafts in existing threads
 - Create Calendar events with invites and list upcoming Calendar events
 
 ## Quick install
@@ -121,6 +121,9 @@ python -m gdocs gmail inspect --gmail-id MSG_ID --thread
 python -m gdocs gmail draft --subject "Hello" --body-file body.md
 python -m gdocs gmail send --to user@example.com --subject "Hello" --body-file body.md --dry-run
 
+# Save a reply-all draft in an existing Gmail thread without sending
+python -m gdocs gmail reply --gmail-id MSG_ID --body-file reply.md --reply-all --draft
+
 # Create a Calendar event and invite attendees
 python -m gdocs calendar create-event --summary "Planning" --start "2026-05-20T10:00:00-07:00" --end "2026-05-20T10:30:00-07:00" --attendee user@example.com
 
@@ -158,7 +161,7 @@ python -m gdocs calendar list-events --time-min "2026-05-20T00:00:00-07:00" --ti
 | `gmail export-md [--limit N] [--subject S] [--from F] [--output-dir DIR] [--unsafe-output-dir] [--force]` | Export cached messages as Markdown |
 | `gmail draft [--to ADDR] --subject S --body-file F [--cc ADDR] [--bcc ADDR] [--body-format FMT]` | Create a Gmail draft without sending |
 | `gmail send --to ADDR --subject S --body-file F [--cc ADDR] [--bcc ADDR] [--body-format FMT] [--dry-run]` | Send an email |
-| `gmail reply --gmail-id ID --body-file F [--to ADDR] [--cc ADDR] [--body-format FMT] [--dry-run]` | Reply to a Gmail thread |
+| `gmail reply --gmail-id ID --body-file F [--reply-all] [--draft/--dry-run] [--to ADDR] [--cc ADDR] [--body-format FMT]` | Send, preview, or save a draft reply in an existing Gmail thread |
 | `gmail archive GMAIL_ID [--dry-run]` | Remove the `INBOX` label |
 | `gmail trash GMAIL_ID [--dry-run]` | Move a message to trash |
 | `gmail mark-read GMAIL_ID [--dry-run]` | Mark a message as read |
