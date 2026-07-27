@@ -1,14 +1,14 @@
-# Skill: Google Docs
+# Skill: Google Workspace
 
 CLI tool for operating on Google Docs, Gmail, and Google Calendar via the official Python SDK. All output is JSON — designed for AI agent consumption.
 
 - **Type**: API Guide
 - **Project**: `adhoc_jobs/gdocs_skill/`
-- **Updated**: 2026-05-20
+- **Updated**: 2026-07-26
 
 ## When to Use
 
-The user says anything implying a Google Docs operation:
+The user asks for a Google Docs, Gmail, or Google Calendar operation:
 
 - "Create a Google Doc" / "Publish this to Google Docs"
 - "Update the doc" / "Re-sync" / "Push changes to the doc"
@@ -18,12 +18,15 @@ The user says anything implying a Google Docs operation:
 - "Add a tab" / "Rename the tab" / "Add an image to the doc"
 - "Download recent email" / "Search Gmail for ..." / "Read this email"
 - "Inspect this Gmail message header" / "Look at cached threading headers"
-- "Send an email" / "Reply to this thread"
+- "Create an email draft" / "Draft a reply in this thread, but do not send"
+- "Send an email" / "Reply to this thread" / "Reply all"
 - "Archive this message" / "Mark as read" / "Apply this Gmail label"
 - "Schedule a meeting" / "Create a calendar event" / "Invite ... to a call"
 - "What's on my calendar" / "List events between ..."
 
 **Default to `sync` over `publish`** when the Markdown file will be edited repeatedly. `publish` always creates a new document; `sync` binds the file to a specific doc via front matter.
+
+For Gmail, distinguish intent before acting: use `gmail draft` for a standalone new-message draft and `gmail reply --draft` for a draft that must stay in an existing thread. `--draft` writes a real Gmail draft but never sends; `--dry-run` performs no write. When the user says reply without narrowing recipients, prefer `--reply-all` so existing participants are preserved. Never omit `--draft` when the user asked only to prepare or create a draft.
 
 ## Activation
 
@@ -179,6 +182,7 @@ python -m gdocs gmail send --to user@example.com --subject "Hello" --body-file b
 python -m gdocs gmail send --to user@example.com --cc reviewer@example.com --subject "Status" --body-file report.html --body-format html
 python -m gdocs gmail send --to user@example.com --subject "Report" --body-file body.md --attach report.pdf
 python -m gdocs gmail reply --gmail-id MSG_ID --body-file reply.md --dry-run
+python -m gdocs gmail reply --gmail-id MSG_ID --body-file reply.md --reply-all --draft
 python -m gdocs gmail reply --gmail-id MSG_ID --body-file reply.md --attach chart.png
 
 # Message state
@@ -199,6 +203,8 @@ Key semantics:
 - `label` accepts system label names (`INBOX`, `UNREAD`, `STARRED`, etc.), raw label IDs, or user label names.
 - `--body-format` accepts `text`, `html`, `markdown`, or `md`. Markdown is sent as plain text.
 - `draft` creates a Gmail draft and never sends. `--to`, `--cc`, and `--bcc` are optional so agents can save no-recipient drafts for human review.
+- `reply --draft` creates a real draft in the original Gmail thread and never sends. It preserves `In-Reply-To`, `References`, and Gmail `threadId`; `--reply-all` retains existing participants while excluding the authenticated account.
+- `reply --draft` and `reply --dry-run` are mutually exclusive: the former writes a server draft, while the latter performs no Gmail mutation.
 - `--attach` accepts one or more file paths and is supported by `draft`, `send`, and `reply`. Each file is inline-attached with auto-detected MIME type. The output includes `attachment_count` and per-file `name`/`size`. This is equivalent to `mail draft --attach` in Outlook Skill.
 - `--dry-run` is available on Gmail send, reply, archive, trash, mark-read, mark-unread, label apply, and label remove.
 - `inspect` parses the cached raw `.eml` for `Message-ID`, `In-Reply-To`, `References`, `Subject`, `From`, `To`, `Cc`, and `Date`, plus `raw_header_text` for direct experiment comparison. With `--thread`, it lists only same-thread messages already in SQLite and `messages/`.

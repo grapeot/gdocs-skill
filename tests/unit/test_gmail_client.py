@@ -192,6 +192,108 @@ def test_reply_message_sets_threading_headers(tmp_path):
     assert b"In-Reply-To: <m1@example.com>" in decoded
 
 
+def test_create_reply_draft_uses_original_thread_without_sending(tmp_path):
+    client, _, users = _client(tmp_path)
+    users.messages.return_value.get.return_value.execute.return_value = {
+        "id": "msg-1",
+        "threadId": "thr-1",
+        "payload": {
+            "headers": [
+                {"name": "Subject", "value": "Hello"},
+                {"name": "From", "value": "Sender <sender@example.com>"},
+                {"name": "To", "value": "Me <me@example.com>, teammate@example.com"},
+                {"name": "Cc", "value": "Teammate <teammate@example.com>, copy@example.com"},
+                {"name": "Message-ID", "value": "<m1@example.com>"},
+                {"name": "References", "value": "<root@example.com>"},
+            ]
+        },
+    }
+    users.getProfile.return_value.execute.return_value = {"emailAddress": "me@example.com"}
+    users.drafts.return_value.create.return_value.execute.return_value = {
+        "id": "draft-1",
+        "message": {"id": "draft-msg-1", "threadId": "thr-1"},
+    }
+
+    result = client.create_reply_draft(gmail_id="msg-1", body_text="Reply", reply_all=True)
+
+    assert result["sent"] is False
+    assert result["operation"] == "reply_draft"
+    assert result["thread_id"] == "thr-1"
+    assert result["to"] == ["Sender <sender@example.com>", "teammate@example.com"]
+    assert result["cc"] == ["copy@example.com"]
+    users.messages.return_value.send.assert_not_called()
+    body = users.drafts.return_value.create.call_args.kwargs["body"]
+    assert body["message"]["threadId"] == "thr-1"
+    decoded = base64.urlsafe_b64decode(body["message"]["raw"].encode("ascii"))
+    assert b"To: Sender <sender@example.com>, teammate@example.com" in decoded
+    assert b"Cc: copy@example.com" in decoded
+    assert b"In-Reply-To: <m1@example.com>" in decoded
+    assert b"References: <root@example.com> <m1@example.com>" in decoded
+
+
+def test_create_reply_draft_explicit_recipients_override_reply_all(tmp_path):
+    client, _, users = _client(tmp_path)
+    users.messages.return_value.get.return_value.execute.return_value = {
+        "id": "msg-1",
+        "threadId": "thr-1",
+        "payload": {
+            "headers": [
+                {"name": "Subject", "value": "Re: Hello"},
+                {"name": "From", "value": "sender@example.com"},
+                {"name": "To", "value": "me@example.com"},
+            ]
+        },
+    }
+    users.getProfile.return_value.execute.return_value = {"emailAddress": "me@example.com"}
+    users.drafts.return_value.create.return_value.execute.return_value = {
+        "id": "draft-1",
+        "message": {"id": "draft-msg-1", "threadId": "thr-1"},
+    }
+
+    result = client.create_reply_draft(
+        gmail_id="msg-1",
+        body_text="Reply",
+        reply_all=True,
+        to=["override@example.com", "OVERRIDE@example.com"],
+        cc=["override@example.com", "reviewer@example.com", "reviewer@example.com"],
+    )
+
+    assert result["to"] == ["override@example.com"]
+    assert result["cc"] == ["reviewer@example.com"]
+    assert result["subject"] == "Re: Hello"
+
+
+def test_create_reply_draft_to_override_is_removed_from_derived_cc(tmp_path):
+    client, _, users = _client(tmp_path)
+    users.messages.return_value.get.return_value.execute.return_value = {
+        "id": "msg-1",
+        "threadId": "thr-1",
+        "payload": {
+            "headers": [
+                {"name": "Subject", "value": "Hello"},
+                {"name": "From", "value": "sender@example.com"},
+                {"name": "To", "value": "me@example.com"},
+                {"name": "Cc", "value": "promoted@example.com, copy@example.com"},
+            ]
+        },
+    }
+    users.getProfile.return_value.execute.return_value = {"emailAddress": "me@example.com"}
+    users.drafts.return_value.create.return_value.execute.return_value = {
+        "id": "draft-1",
+        "message": {"id": "draft-msg-1", "threadId": "thr-1"},
+    }
+
+    result = client.create_reply_draft(
+        gmail_id="msg-1",
+        body_text="Reply",
+        reply_all=True,
+        to=["promoted@example.com"],
+    )
+
+    assert result["to"] == ["promoted@example.com"]
+    assert result["cc"] == ["copy@example.com"]
+
+
 def test_archive_and_mark_read_modify_labels(tmp_path):
     client, _, users = _client(tmp_path)
     users.messages.return_value.modify.return_value.execute.return_value = {

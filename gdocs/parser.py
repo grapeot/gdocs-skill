@@ -206,7 +206,10 @@ def build_parser() -> argparse.ArgumentParser:
     _ = gmail_reply.add_argument("--to", action="append")
     _ = gmail_reply.add_argument("--cc", action="append")
     _ = gmail_reply.add_argument("--attach", action="append", type=Path)
-    _ = gmail_reply.add_argument("--dry-run", action="store_true")
+    _ = gmail_reply.add_argument("--reply-all", action="store_true")
+    gmail_reply_mode = gmail_reply.add_mutually_exclusive_group()
+    _ = gmail_reply_mode.add_argument("--draft", action="store_true")
+    _ = gmail_reply_mode.add_argument("--dry-run", action="store_true")
 
     for command_name in ("archive", "trash", "mark-read", "mark-unread"):
         command_parser = gmail_subparsers.add_parser(command_name)

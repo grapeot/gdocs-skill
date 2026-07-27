@@ -2,6 +2,13 @@
 
 ## Changelog
 
+### 2026-07-26
+
+- Added `gmail reply --draft` for creating a real Gmail draft in the original thread without sending.
+- Added `--reply-all` recipient derivation with authenticated-account exclusion, deduplication, and explicit `--to` / `--cc` overrides.
+- Made `--draft` and `--dry-run` mutually exclusive and documented their distinct server-write semantics.
+- Added client, CLI, recipient, threading, no-send, and gated live draft coverage.
+
 ### 2026-06-02
 
 - Added `python -m gdocs gmail draft --subject S --body-file F` for creating Gmail drafts without sending.

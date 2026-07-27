@@ -42,6 +42,32 @@ def test_gmail_search_inbox(gmail: GmailClient) -> None:
 
 
 @pytest.mark.live_integration
+def test_gmail_create_reply_draft_in_existing_thread(gmail: GmailClient) -> None:
+    if os.getenv("GDOCS_GMAIL_LIVE_ALLOW_DRAFT") != "1":
+        pytest.skip("set GDOCS_GMAIL_LIVE_ALLOW_DRAFT=1 to create a live Gmail draft")
+
+    found = gmail.search_messages(query="older_than:2d newer_than:30d", max_results=1)
+    assert found
+    original = gmail.get_message_metadata(found[0]["gmail_id"])
+    recipient = str(gmail.get_profile()["emailAddress"])
+    result = gmail.create_reply_draft(
+        gmail_id=found[0]["gmail_id"],
+        body_text="Reply draft created by a gated live integration test.",
+        to=[recipient],
+    )
+    try:
+        assert result["sent"] is False
+        assert result["thread_id"] == original["thread_id"]
+        stored = gmail.gmail.users().drafts().get(
+            userId="me", id=result["draft_id"], format="metadata"
+        ).execute()
+        assert "DRAFT" in stored["message"]["labelIds"]
+        assert stored["message"]["threadId"] == original["thread_id"]
+    finally:
+        gmail.gmail.users().drafts().delete(userId="me", id=result["draft_id"]).execute()
+
+
+@pytest.mark.live_integration
 def test_gmail_send_download_reply_and_archive_self(gmail: GmailClient, tmp_path: Path) -> None:
     if os.getenv("GDOCS_GMAIL_LIVE_ALLOW_SEND") != "1":
         pytest.skip("set GDOCS_GMAIL_LIVE_ALLOW_SEND=1 to send live Gmail test messages")
