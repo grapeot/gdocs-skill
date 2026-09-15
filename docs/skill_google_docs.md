@@ -4,7 +4,7 @@ CLI tool for operating on Google Docs, Gmail, and Google Calendar via the offici
 
 - **Type**: API Guide
 - **Project**: `adhoc_jobs/gdocs_skill/`
-- **Updated**: 2026-07-26
+- **Updated**: 2026-09-15
 
 ## When to Use
 
@@ -47,6 +47,8 @@ A command succeeded when:
 - For all others: output contains `"success": true` or the documented fields
 
 If any of these fail, the command did not succeed. Do not assume success without checking exit code.
+
+For document delivery, API success is not formatting acceptance. Read the target tab back with `documents.get(includeTabsContent=True)`, including paragraphs inside tables. Check that intended emphasis uses native `textStyle.bold`, links use `textStyle.link`, and Markdown delimiters are not left as visible text. Verify content as well as styling before sharing; preserve existing permissions when repairing a document.
 
 ## Prerequisites
 
@@ -272,9 +274,11 @@ All commands that accept files default to `--format markdown`. Supported convers
 | `- item` / `1. item` | Unordered / ordered list |
 | `---` / `***` / `___` | Horizontal rule (gray centered line) |
 | `> text` | Blockquote (indent + gray left border) |
-| `| col \| col \|` | Native table (header row bolded) |
+| `| col \| col \|` | Native table with literal cell text; header row bolded |
 
 Not supported: code blocks with syntax highlighting, merged table cells, column widths, image syntax (`![]()`). Images must be inserted separately.
+
+**Inline formatting applies to text blocks, not table cells.** The current table converter inserts each cell string literally and only bolds the header row. For example, `**Important**` in a body cell remains visible with its asterisks; italic, inline-code and Markdown-link syntax are also not parsed there. Use plain cell text unless you will apply native formatting afterward. Google Docs does not interpret Markdown passed through the API's `insertText` request.
 
 ## Error Handling
 
@@ -291,11 +295,13 @@ Decision tree by HTTP status:
 - **401 or 403** — Authentication problem. Delete `secrets/token.json` and re-run. For 403, also verify the user's email is in the OAuth consent screen Test users list.
 - **404** — Document not found or no permission.
 
-If `publish` or `sync` renders Markdown as plain text (no formatting), re-apply formatting to the existing doc: `python -m gdocs tab replace DOC_ID t.0 file.md --format markdown`. Use `tab list DOC_ID` to confirm the tab ID. Do not create a new document.
+If the whole tab was inserted as plain text, re-convert it in the existing doc: `python -m gdocs tab replace DOC_ID TAB_ID file.md --format markdown`. Use `tab list DOC_ID` to obtain the actual tab ID, and reconcile any edits made in Docs before replacing its content. Do not create a new document. This does **not** fix literal Markdown inside table cells; those use the same limited converter on every run.
 
 ## Known Pitfalls
 
 These are real failure patterns encountered in production:
+
+**Literal bold markers in tables.** A document can have native headings, tables and body emphasis while table cells still show `**text**`. Re-running `sync` or `tab replace --format markdown` reproduces this limitation. To repair the existing doc, read its current tab structure, retain a private snapshot, and use `documents.batchUpdate` to set `updateTextStyle` with `textStyle: {"bold": true}` and `fields: "bold"` on the enclosed text, then delete only its opening and closing markers. Use the actual `tabId`, UTF-16 code-unit indices and `writeControl.requiredRevisionId` from that read to avoid overwriting concurrent edits. Process spans from the end backward, deleting the closing markers before the opening markers so earlier indices remain valid. Read back to verify native bold, no remaining unintended markers, and unchanged content apart from the removed delimiters. Native repairs are not persisted in the Markdown binding: a later sync will undo them, so avoid unsupported cell markup or repeat native styling and verification after conversion.
 
 **OAuth 403 with no visible error page.** When the OAuth consent screen is External + testing mode, the user's Gmail must be in the Test users list. Skipping this causes a raw `Error 403: access_denied` — not the expected "unverified app" page. Guide the user to add their email at https://console.cloud.google.com/auth/audience.
 
