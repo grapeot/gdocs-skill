@@ -2,6 +2,11 @@
 
 ## Changelog
 
+### 2026-09-15
+
+- Clarified that Markdown inline formatting is supported in text blocks but not table cells; native table headers alone are automatically bolded.
+- Added formatting readback criteria and revision-guarded repair guidance for literal table-cell bold markers. Re-running Markdown conversion is not a workaround for this limitation.
+
 ### 2026-07-26
 
 - Added `gmail reply --draft` for creating a real Gmail draft in the original thread without sending.
@@ -91,6 +96,8 @@
 - Fixed 6 unit test failures caused by parallel agent interface mismatches: `isinstance(Credentials)` guards failing on MagicMock, missing `fields` parameter assertions, parameter name inconsistencies, `PropertyMock` issues on mock classes.
 
 ## Lessons Learned
+
+- A successful document API response and native table structure do not establish correct inline styling. Check table-cell text and native styles explicitly; post-conversion repairs will be lost on a later sync unless reapplied.
 
 ### API Behavior
 
