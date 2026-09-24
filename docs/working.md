@@ -2,6 +2,13 @@
 
 ## Changelog
 
+### 2026-09-24
+
+- Fixed `gmail draft`/`send`/`reply` silently downgrading Markdown bodies to plain text: `_normalize_body_format` mapped `markdown` to `text`, so `--body-format markdown|md` produced `text/plain` drafts that rendered as literal Markdown in Gmail.
+- `markdown`/`md` bodies are now converted to simple HTML (headings, bold/italic, inline code, autolinked-style links, single-level lists) with HTML escaping applied before markup insertion, so raw HTML in a Markdown file cannot execute.
+- `html` continues to pass through verbatim as `text/html`; plain `text` behavior is unchanged.
+- Added unit coverage for markdown→HTML rendering, HTML escaping, `html` passthrough, and `text` plain preservation.
+
 ### 2026-09-15
 
 - Clarified that Markdown inline formatting is supported in text blocks but not table cells; native table headers alone are automatically bolded.

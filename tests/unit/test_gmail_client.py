@@ -369,3 +369,83 @@ def test_send_message_with_attachments(tmp_path):
     body = users.messages.return_value.send.call_args.kwargs["body"]
     decoded = base64.urlsafe_b64decode(body["raw"].encode("ascii"))
     assert b"report.pdf" in decoded
+
+
+def test_markdown_body_format_renders_html(tmp_path):
+    client, _, users = _client(tmp_path)
+    users.drafts.return_value.create.return_value.execute.return_value = {
+        "id": "draft-1",
+        "message": {"id": "msg-1", "threadId": "thr-1"},
+    }
+
+    result = client.create_draft(
+        to=["recipient@example.com"],
+        subject="Hello",
+        body_text="# Heading\n\nHello **bold** world.\n\n- one\n- two\n",
+        body_format="markdown",
+    )
+
+    assert result["draft_id"] == "draft-1"
+    body = users.drafts.return_value.create.call_args.kwargs["body"]
+    decoded = base64.urlsafe_b64decode(body["message"]["raw"].encode("ascii"))
+    assert b"Content-Type: text/html" in decoded
+    assert b"Content-Type: text/plain" not in decoded
+    assert b"<h1>Heading</h1>" in decoded
+    assert b"<strong>bold</strong>" in decoded
+    assert b"<li>one</li>" in decoded
+
+
+def test_markdown_body_format_escapes_html(tmp_path):
+    client, _, users = _client(tmp_path)
+    users.drafts.return_value.create.return_value.execute.return_value = {
+        "id": "draft-1",
+        "message": {"id": "msg-1", "threadId": "thr-1"},
+    }
+
+    client.create_draft(
+        to=["recipient@example.com"],
+        subject="Hello",
+        body_text="<script>alert(1)</script> & <b>not bold</b>",
+        body_format="markdown",
+    )
+
+    body = users.drafts.return_value.create.call_args.kwargs["body"]
+    decoded = base64.urlsafe_b64decode(body["message"]["raw"].encode("ascii"))
+    assert b"<script>" not in decoded
+    assert b"&lt;script&gt;" in decoded
+    assert b"&lt;b&gt;not bold&lt;/b&gt;" in decoded
+
+
+def test_html_body_format_keeps_raw_html(tmp_path):
+    client, _, users = _client(tmp_path)
+    users.drafts.return_value.create.return_value.execute.return_value = {
+        "id": "draft-1",
+        "message": {"id": "msg-1", "threadId": "thr-1"},
+    }
+
+    client.create_draft(
+        to=["recipient@example.com"],
+        subject="Hello",
+        body_text="<p>Hi Leonardo,</p>",
+        body_format="html",
+    )
+
+    body = users.drafts.return_value.create.call_args.kwargs["body"]
+    decoded = base64.urlsafe_b64decode(body["message"]["raw"].encode("ascii"))
+    assert b"Content-Type: text/html" in decoded
+    assert b"<p>Hi Leonardo,</p>" in decoded
+
+
+def test_text_body_format_stays_plain(tmp_path):
+    client, _, users = _client(tmp_path)
+    users.drafts.return_value.create.return_value.execute.return_value = {
+        "id": "draft-1",
+        "message": {"id": "msg-1", "threadId": "thr-1"},
+    }
+
+    client.create_draft(to=["recipient@example.com"], subject="Hello", body_text="Body")
+
+    body = users.drafts.return_value.create.call_args.kwargs["body"]
+    decoded = base64.urlsafe_b64decode(body["message"]["raw"].encode("ascii"))
+    assert b"Content-Type: text/plain" in decoded
+    assert b"Content-Type: text/html" not in decoded

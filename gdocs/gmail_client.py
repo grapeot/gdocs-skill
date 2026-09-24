@@ -3,7 +3,9 @@ from __future__ import annotations
 """Gmail API client: direct SDK wrapper."""
 
 import base64
+import html
 import mimetypes
+import re
 from email import policy
 from email.message import EmailMessage
 from email.parser import BytesParser
@@ -495,6 +497,45 @@ class GmailClient:
             raise RuntimeError(_http_error_message(f"Failed to trash Gmail message '{gmail_id}'", exc)) from exc
 
 
+def _markdown_to_html(markdown_text: str) -> str:
+    escaped = html.escape(markdown_text, quote=False)
+    escaped = re.sub(r"^### (.+)$", r"<h3>\1</h3>", escaped, flags=re.MULTILINE)
+    escaped = re.sub(r"^## (.+)$", r"<h2>\1</h2>", escaped, flags=re.MULTILINE)
+    escaped = re.sub(r"^# (.+)$", r"<h1>\1</h1>", escaped, flags=re.MULTILINE)
+    escaped = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", escaped)
+    escaped = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"<em>\1</em>", escaped)
+    escaped = re.sub(r"`([^`]+)`", r"<code>\1</code>", escaped)
+    escaped = re.sub(
+        r"\[([^\]]+)\]\((https?://[^)\s]+)\)",
+        r'<a href="\2">\1</a>',
+        escaped,
+    )
+    lines = escaped.splitlines()
+    html_lines: list[str] = []
+    in_list = False
+    for line in lines:
+        stripped = line.strip()
+        list_match = re.match(r"^(?:[-*]|\d+\.)\s+(.*)$", stripped)
+        if list_match:
+            if not in_list:
+                html_lines.append("<ul>")
+                in_list = True
+            html_lines.append(f"<li>{list_match.group(1)}</li>")
+            continue
+        if in_list:
+            html_lines.append("</ul>")
+            in_list = False
+        if not stripped:
+            continue
+        if re.match(r"^<(h[123]|ul|ol|blockquote|table)", stripped):
+            html_lines.append(stripped)
+        else:
+            html_lines.append(f"<p>{stripped}</p>")
+    if in_list:
+        html_lines.append("</ul>")
+    return "\n".join(html_lines)
+
+
 def _build_email_message(
     *,
     to: list[str],
@@ -509,8 +550,9 @@ def _build_email_message(
     if not to and not allow_empty_to:
         raise ValueError("At least one recipient is required")
     message = EmailMessage()
-    subtype = "html" if body_format == "html" else "plain"
-    message.set_content(body_text, subtype=subtype)
+    subtype = "html" if body_format in ("html", "markdown") else "plain"
+    body = _markdown_to_html(body_text) if body_format == "markdown" else body_text
+    message.set_content(body, subtype=subtype)
     if to:
         message["To"] = ", ".join(to)
     if cc:
