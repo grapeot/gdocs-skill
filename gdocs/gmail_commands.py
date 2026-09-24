@@ -236,6 +236,4 @@ def _stored_message_json(message: StoredMessage) -> dict[str, object]:
 def _normalize_body_format(value: str) -> str:
     if value == "md":
         return "markdown"
-    if value == "markdown":
-        return "text"
     return value

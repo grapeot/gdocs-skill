@@ -182,6 +182,8 @@ python -m gdocs gmail draft --to user@example.com --subject "Hello" --body-file 
 python -m gdocs gmail draft --to user@example.com --subject "Invoice" --body-file body.md --attach invoice.pdf
 python -m gdocs gmail send --to user@example.com --subject "Hello" --body-file body.md --dry-run
 python -m gdocs gmail send --to user@example.com --cc reviewer@example.com --subject "Status" --body-file report.html --body-format html
+python -m gdocs gmail draft --to user@example.com --subject "Hello" --body-file body.md --body-format markdown
+python -m gdocs gmail reply --gmail-id MSG_ID --body-file reply.md --draft --body-format markdown
 python -m gdocs gmail send --to user@example.com --subject "Report" --body-file body.md --attach report.pdf
 python -m gdocs gmail reply --gmail-id MSG_ID --body-file reply.md --dry-run
 python -m gdocs gmail reply --gmail-id MSG_ID --body-file reply.md --reply-all --draft
@@ -203,7 +205,7 @@ Key semantics:
 - `archive` removes the `INBOX` label. Gmail does not have an Archive folder.
 - `trash` calls Gmail's recoverable trash endpoint.
 - `label` accepts system label names (`INBOX`, `UNREAD`, `STARRED`, etc.), raw label IDs, or user label names.
-- `--body-format` accepts `text`, `html`, `markdown`, or `md`. Markdown is sent as plain text.
+- `--body-format` accepts `text`, `html`, `markdown`, or `md`. `html` sends the file verbatim as `text/html`. `markdown`/`md` are converted to simple HTML (headings, bold/italic, inline code, links, lists; content is HTML-escaped first, so raw HTML in a Markdown file is inert). Plain `text` stays plain.
 - `draft` creates a Gmail draft and never sends. `--to`, `--cc`, and `--bcc` are optional so agents can save no-recipient drafts for human review.
 - `reply --draft` creates a real draft in the original Gmail thread and never sends. It preserves `In-Reply-To`, `References`, and Gmail `threadId`; `--reply-all` retains existing participants while excluding the authenticated account.
 - `reply --draft` and `reply --dry-run` are mutually exclusive: the former writes a server draft, while the latter performs no Gmail mutation.
