@@ -12,6 +12,7 @@ CLI tool for Google Docs, Gmail, and Calendar automation via the official Python
 - Full tab management: list, add, rename, replace content
 - Download, search, read, export, inspect cached headers, draft, send, reply to, archive, trash, and label Gmail messages, including reply-all drafts in existing threads
 - Create Calendar events with invites and list upcoming Calendar events
+- Download Drive files and recursively download folder trees, with Google Workspace exports
 
 ## Quick install
 
@@ -83,6 +84,31 @@ python -m gdocs create --title "Smoke test"
 On first run, a browser window opens for Google authorization. After authorizing, `secrets/token.json` is created and subsequent runs require no interaction.
 
 If you previously authorized the tool before Gmail or Calendar support existed, delete `secrets/token.json` and run `python -m gdocs gmail profile` or `python -m gdocs calendar list-events --time-min 2026-01-01T00:00:00Z` to reauthorize with the new scopes.
+
+## Download Drive files and folders
+
+Download entire folders or individual files from Google Drive using a file ID or sharing URL:
+
+```bash
+# Download a folder recursively into an output container directory
+python -m gdocs drive download FOLDER_ID --output-dir ./downloads
+
+# Download via URL and export Docs/Sheets/Slides as PDF instead of Office formats
+python -m gdocs drive download "https://drive.google.com/drive/folders/FOLDER_ID" --output-dir ./downloads --export-format pdf
+
+# Preview file hierarchy and metadata without downloading files
+python -m gdocs drive download FOLDER_ID --output-dir ./downloads --dry-run
+```
+
+- **Supported Sources**: Accepts file/folder IDs and Google Drive/Docs HTTPS sharing URLs
+  (including `/folders/`, `/file/d/`, and resource keys). Creates the root item inside `--output-dir`.
+- **Formats & Integrity**: Exports Docs/Sheets/Slides to Office formats (or PDF via `--export-format pdf`).
+  Verifies binary file sizes and MD5 checksums; publishes atomically without overwriting existing files.
+- **Authorization**: Requests `https://www.googleapis.com/auth/drive.readonly` on demand (add it to your OAuth consent screen).
+  Existing token content is preserved if authorization fails or times out (default 120 seconds).
+- **Dry-run**: Reads API metadata and may still open the OAuth browser and update the token.
+- **Partial downloads**: Shortcuts, unsupported Google types, and disabled downloads are reported as skips.
+  Any skip or failure returns exit code 1. Existing files are not overwritten; retry in a new output directory.
 
 ## Usage examples
 

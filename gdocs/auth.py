@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import redirect_stdout
+import sys
 from pathlib import Path
 from typing import cast
 
@@ -28,7 +30,7 @@ def _write_private_token(token_path: Path, token_json: str) -> None:
     token_path.chmod(0o600)
 
 
-def _token_has_required_scopes(token_path: Path) -> bool:
+def _token_has_required_scopes(token_path: Path, scopes: list[str] | None = None) -> bool:
     try:
         raw = json.loads(token_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -40,10 +42,12 @@ def _token_has_required_scopes(token_path: Path) -> bool:
         token_scopes = {str(item) for item in stored}
     else:
         return False
-    return set(SCOPES).issubset(token_scopes)
+    return set(scopes or SCOPES).issubset(token_scopes)
 
 
-def get_credentials(secrets_dir: Path) -> Credentials:
+def get_credentials(
+    secrets_dir: Path, *, extra_scopes: list[str] | None = None, auth_timeout: int | None = None,
+) -> Credentials:
     """Get valid Google OAuth credentials.
 
     Args:
@@ -58,6 +62,7 @@ def get_credentials(secrets_dir: Path) -> Credentials:
     """
     token_path = secrets_dir / "token.json"
     credentials_path = secrets_dir / "credentials.json"
+    required_scopes = list(dict.fromkeys(SCOPES + (extra_scopes or [])))
 
     if secrets_dir.exists():
         secrets_dir.chmod(0o700)
@@ -68,8 +73,12 @@ def get_credentials(secrets_dir: Path) -> Credentials:
         raise FileNotFoundError(f"Missing OAuth credentials file: {credentials_path}")
 
     creds: Credentials | None = None
-    if token_path.exists() and _token_has_required_scopes(token_path):
-        creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
+    if token_path.exists() and _token_has_required_scopes(token_path, required_scopes):
+        # Keep optional grants when refreshing from an ordinary Gmail/Docs command.
+        stored = json.loads(token_path.read_text(encoding="utf-8"))["scopes"]
+        stored_scopes = stored.split() if isinstance(stored, str) else stored
+        granted_scopes = list(dict.fromkeys(required_scopes + stored_scopes))
+        creds = Credentials.from_authorized_user_file(str(token_path), granted_scopes)
 
     if creds and creds.valid:
         return creds
@@ -83,8 +92,14 @@ def get_credentials(secrets_dir: Path) -> Credentials:
             creds = None
 
     try:
-        flow = InstalledAppFlow.from_client_secrets_file(str(credentials_path), SCOPES)
-        fresh_creds = cast(Credentials, flow.run_local_server(port=0))
+        flow = InstalledAppFlow.from_client_secrets_file(str(credentials_path), required_scopes)
+        kwargs = {"port": 0}
+        if auth_timeout is not None:
+            kwargs["timeout_seconds"] = auth_timeout
+        with redirect_stdout(sys.stderr):
+            fresh_creds = cast(Credentials, flow.run_local_server(**kwargs))
+        if not fresh_creds.has_scopes(required_scopes):
+            raise RuntimeError("Google did not grant all requested scopes")
         _write_private_token(token_path, fresh_creds.to_json())
         return fresh_creds
     except Exception as exc:
