@@ -142,6 +142,55 @@ python -m gdocs image DOC_ID chart.png --width 468 --index 2050 --tab-id t.abc
 
 When inserting images that correspond to `![alt](path.png)` in a Markdown file: publish the Markdown first (alt text becomes plain text), then scan the doc for the alt text positions, and insert images from bottom to top to avoid index drift.
 
+### Drive Download Commands
+
+Download individual files or recursive folder trees from Google Drive/Docs.
+
+```bash
+# Download a folder recursively into an output container directory
+python -m gdocs drive download FOLDER_ID --output-dir ./downloads
+
+# Download via sharing URL (supports folders, files, /d/, open?id=, resource keys)
+python -m gdocs drive download "https://drive.google.com/drive/folders/FOLDER_ID?resourcekey=KEY" --output-dir ./downloads
+
+# Export Google Docs/Sheets/Slides to PDF instead of default Office formats (DOCX/XLSX/PPTX)
+python -m gdocs drive download FILE_ID --output-dir ./downloads --export-format pdf
+
+# Set custom OAuth browser authorization timeout in seconds (default: 120)
+python -m gdocs drive download FOLDER_ID --output-dir ./downloads --auth-timeout 60
+
+# Preview download plan and metadata without downloading bytes or creating output files
+python -m gdocs drive download FOLDER_ID --output-dir ./downloads --dry-run
+# Output includes: {"success": true, "dry_run": true, "files": [{"id": "...", "status": "planned"}]}
+```
+
+- **Output Container & Naming**: `--output-dir` is a container directory; the command creates
+  the source root folder or file inside it. Path separators and invalid characters are sanitized;
+  collisions are resolved case-insensitively by appending `__<id>`. Local symlinks in paths or
+  ancestors are refused.
+- **Folder Recursion & Shared Drives**: Recursively traverses nested folders, creates empty
+  directories, and paginates listings with shared-drive API flags (`supportsAllDrives=True`,
+  `includeItemsFromAllDrives=True`).
+- **Binary Downloads & Verification**: Ordinary binary files download in 8 MiB chunks with chunk
+  retries. Validates size and MD5 checksum against Drive metadata when provided. Downloads stream
+  to temporary files and publish atomically without replacing destinations; incomplete temporary
+  downloads are cleaned up.
+- **Workspace Exports & Limits**: Google Docs export to DOCX, Sheets to XLSX, Slides to PPTX, and
+  Drawings to PDF (or all supported types to PDF via `--export-format pdf`). Exports are subject to
+  Google's 10 MB `files.export` limit.
+- **Skips, Errors & No Overwrite**: Shortcuts (not followed), unsupported Google types (Forms/Sites),
+  and owner-restricted downloads are skipped. Any skip or failure sets `"success": false` and exits
+  with code 1, while returning per-file status in JSON. Existing files are never overwritten;
+  reruns after partial failure require a new or clean output directory.
+- **On-Demand OAuth**: Requires `https://www.googleapis.com/auth/drive.readonly`, requested on demand
+  without altering the default base scopes. Add the optional scope to the OAuth consent screen if
+  needed. Browser access alone does not grant `drive.file` access to arbitrary shared files.
+  Bounded auth (`--auth-timeout N`, default 120s) preserves the existing token content on timeout or
+  failure. Standard commands preserve optional grants on refresh; do not delete the token to retry.
+- **Dry-Run Mode**: Queries Drive API metadata to construct the full plan without downloading bytes
+  or writing output files. It may still prompt for OAuth authorization and update `secrets/token.json`.
+  Cloud file content is read-only throughout.
+
 ### Gmail Commands
 
 All Gmail commands live under `python -m gdocs gmail ...`. Server-side searches use native Gmail query syntax (`from:`, `subject:`, `newer_than:`, `is:unread`, `label:`, etc.). Local reads use the SQLite + `.eml` cache under `data/mail/` unless `--mail-data-dir` overrides it.

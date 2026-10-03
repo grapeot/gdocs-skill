@@ -17,6 +17,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    drive_parser = subparsers.add_parser("drive")
+    drive_subparsers = drive_parser.add_subparsers(dest="drive_command", required=True)
+    drive_download = drive_subparsers.add_parser("download")
+    _ = drive_download.add_argument("source", help="Drive file/folder ID or Google sharing URL")
+    _ = drive_download.add_argument("--output-dir", type=Path, required=True)
+    _ = drive_download.add_argument("--export-format", choices=["office", "pdf"], default="office")
+    _ = drive_download.add_argument("--dry-run", action="store_true")
+    _ = drive_download.add_argument("--auth-timeout", type=int, default=120)
+
     publish_parser = subparsers.add_parser("publish")
     _ = publish_parser.add_argument("file", type=Path)
     _ = publish_parser.add_argument("--title", required=True)

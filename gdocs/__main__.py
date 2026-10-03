@@ -14,6 +14,7 @@ from .calendar_client import CalendarClient
 from .calendar_commands import run_calendar_command
 from .client import GoogleDocsClient
 from .docs_commands import run_docs_command
+from .drive_client import DriveClient, parse_source
 from .gmail_client import GmailClient
 from .gmail_commands import run_gmail_command
 from .mail_store import MailStore
@@ -24,6 +25,14 @@ def run_command(args: argparse.Namespace) -> object:
     data = vars(args)
     secrets_dir = Path(data["secrets_dir"])
     command = str(data["command"])
+    if command == "drive":
+        file_id, resource_key = parse_source(data["source"])
+        if data["auth_timeout"] <= 0:
+            raise ValueError("--auth-timeout must be positive")
+        return DriveClient(secrets_dir, auth_timeout=data["auth_timeout"]).download(
+            file_id, data["output_dir"], resource_key=resource_key,
+            export_format=data["export_format"], dry_run=data["dry_run"],
+        )
     if command == "calendar":
         return run_calendar_command(
             data,
@@ -48,6 +57,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         result = run_command(args)
         print(json.dumps(result, ensure_ascii=False, indent=2))
+        if args.command == "drive" and isinstance(result, dict) and not result.get("success"):
+            return 1
         return 0
     except HttpError as exc:
         error_detail = {
