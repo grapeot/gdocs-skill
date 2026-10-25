@@ -108,3 +108,15 @@ def test_gmail_send_download_reply_and_archive_self(gmail: GmailClient, tmp_path
 
     archive = gmail.archive_message(found[0]["gmail_id"])
     assert archive["dry_run"] is False
+    assert archive["verified"] is True
+    assert "INBOX" not in archive["label_ids"]
+
+    try:
+        unarchive = gmail.unarchive_message(found[0]["gmail_id"])
+        assert unarchive["dry_run"] is False
+        assert unarchive["verified"] is True
+        assert "INBOX" in unarchive["label_ids"]
+    finally:
+        final_archive = gmail.archive_message(found[0]["gmail_id"])
+        assert final_archive["verified"] is True
+        assert "INBOX" not in final_archive["label_ids"]

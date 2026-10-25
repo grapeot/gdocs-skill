@@ -109,6 +109,14 @@ class MailStore:
         ).fetchone()
         return row is not None
 
+    def update_message_labels(self, gmail_id: str, label_ids: list[str]) -> bool:
+        cursor = self.connection.execute(
+            "UPDATE messages SET labels_json = ? WHERE gmail_id = ?",
+            (json.dumps(label_ids), gmail_id),
+        )
+        self.connection.commit()
+        return cursor.rowcount > 0
+
     def save_message(
         self,
         *,

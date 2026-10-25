@@ -2,6 +2,12 @@
 
 ## Changelog
 
+### 2026-10-25
+
+- Added `gmail unarchive GMAIL_ID [--dry-run]` to restore the `INBOX` label through the existing `users.messages.modify` path and `gmail.modify` scope.
+- Archive and unarchive now verify returned `labelIds` and update an existing cached message's `labels_json`; uncached messages and raw MIME are not created or rewritten, and old Markdown exports retain snapshot semantics until explicit `--force` re-export.
+- Added client, CLI, SQLite, and live round-trip coverage. The gated live self-test now verifies archive → unarchive → final archive without deleting the test message.
+
 ### 2026-09-24
 
 - Fixed `gmail draft`/`send`/`reply` silently downgrading Markdown bodies to plain text: `_normalize_body_format` mapped `markdown` to `text`, so `--body-format markdown|md` produced `text/plain` drafts that rendered as literal Markdown in Gmail.

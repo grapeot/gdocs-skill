@@ -91,7 +91,7 @@ Insert local images (PNG, JPEG, GIF) into a document at a specific character ind
 
 ## Gmail Integration
 
-**Implementation status**: Complete for the first Gmail milestone. The implemented surface covers download, search, local list/read/export, standalone and in-thread drafts, send, reply, archive, trash, read/unread state, and label operations.
+**Implementation status**: Complete for the first Gmail milestone. The implemented surface covers download, search, local list/read/export, standalone and in-thread drafts, send, reply, archive, unarchive, trash, read/unread state, and label operations.
 
 The Gmail pipeline covers server-side search, local download, local read/export, sending, replying, and message state changes. Gmail commands are grouped under `python -m gdocs gmail ...`. Mutating operations support `--dry-run` where a preview is useful.
 
@@ -106,7 +106,8 @@ The Gmail pipeline covers server-side search, local download, local read/export,
 | `gmail export-md` | Export cached messages as Markdown files with YAML front matter |
 | `gmail send` | Send an email via the Gmail API |
 | `gmail reply` | Send, preview, or save an in-thread draft using `In-Reply-To`, `References`, and Gmail `threadId`; optional reply-all excludes the authenticated account and deduplicates recipients |
-| `gmail archive` | Remove the `INBOX` label |
+| `gmail archive` | Remove the `INBOX` label and update cached labels |
+| `gmail unarchive` | Restore the `INBOX` label and update cached labels |
 | `gmail trash` | Move a message to Gmail Trash |
 | `gmail mark-read` | Remove the `UNREAD` label |
 | `gmail mark-unread` | Add the `UNREAD` label |
@@ -125,7 +126,7 @@ data/mail/
 
 The SQLite index supports local filtering by Gmail ID, subject, sender, and thread ID. Raw `.eml` files preserve MIME content. `gmail inspect --gmail-id ID [--thread]` parses the cached raw headers and, when requested, reports only same-thread messages already present locally. Messages are deduplicated by `gmail_id` during download. The global `--mail-data-dir` flag overrides the cache location. Markdown exports default to `data/mail/markdown/`; export paths outside `data/mail/` require `--unsafe-output-dir` because they contain private email bodies.
 
-Gmail uses labels rather than folders. Archive removes the `INBOX` label rather than moving the message. User labels and system labels such as `INBOX`, `UNREAD`, `STARRED`, `IMPORTANT`, `SENT`, `DRAFT`, `TRASH`, `SPAM`, and `CATEGORY_*` can be resolved by name or ID.
+Gmail uses labels rather than folders. Archive removes the `INBOX` label rather than moving the message; unarchive restores it. Both operations verify returned labels and update an existing cached row, without creating uncached rows or rewriting MIME. Previously exported Markdown remains a snapshot until explicit `--force` re-export. User labels and system labels such as `INBOX`, `UNREAD`, `STARRED`, `IMPORTANT`, `SENT`, `DRAFT`, `TRASH`, `SPAM`, and `CATEGORY_*` can be resolved by name or ID.
 
 ## Output Contract
 
