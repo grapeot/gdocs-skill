@@ -188,7 +188,8 @@ python -m gdocs calendar list-events --time-min "2026-05-20T00:00:00-07:00" --ti
 | `gmail draft [--to ADDR] --subject S --body-file F [--cc ADDR] [--bcc ADDR] [--body-format FMT]` | Create a Gmail draft without sending |
 | `gmail send --to ADDR --subject S --body-file F [--cc ADDR] [--bcc ADDR] [--body-format FMT] [--dry-run]` | Send an email |
 | `gmail reply --gmail-id ID --body-file F [--reply-all] [--draft/--dry-run] [--to ADDR] [--cc ADDR] [--body-format FMT]` | Send, preview, or save a draft reply in an existing Gmail thread |
-| `gmail archive GMAIL_ID [--dry-run]` | Remove the `INBOX` label |
+| `gmail archive GMAIL_ID [--dry-run]` | Remove the `INBOX` label and update cached labels |
+| `gmail unarchive GMAIL_ID [--dry-run]` | Restore the `INBOX` label and update cached labels |
 | `gmail trash GMAIL_ID [--dry-run]` | Move a message to trash |
 | `gmail mark-read GMAIL_ID [--dry-run]` | Mark a message as read |
 | `gmail mark-unread GMAIL_ID [--dry-run]` | Mark a message as unread |

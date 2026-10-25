@@ -220,7 +220,7 @@ def build_parser() -> argparse.ArgumentParser:
     _ = gmail_reply_mode.add_argument("--draft", action="store_true")
     _ = gmail_reply_mode.add_argument("--dry-run", action="store_true")
 
-    for command_name in ("archive", "trash", "mark-read", "mark-unread"):
+    for command_name in ("archive", "unarchive", "trash", "mark-read", "mark-unread"):
         command_parser = gmail_subparsers.add_parser(command_name)
         _ = command_parser.add_argument("gmail_id")
         _ = command_parser.add_argument("--dry-run", action="store_true")

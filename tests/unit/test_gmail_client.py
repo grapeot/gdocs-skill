@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 from unittest.mock import patch
 
+import pytest
+
 from gdocs.gmail_client import GmailClient
 
 
@@ -313,6 +315,60 @@ def test_archive_and_mark_read_modify_labels(tmp_path):
         "addLabelIds": [],
         "removeLabelIds": ["UNREAD"],
     }
+
+
+def test_unarchive_adds_inbox_and_dry_run_does_not_modify(tmp_path):
+    client, _, users = _client(tmp_path)
+    users.messages.return_value.modify.return_value.execute.return_value = {
+        "id": "msg-1",
+        "threadId": "thr-1",
+        "labelIds": ["INBOX", "UNREAD"],
+    }
+
+    result = client.unarchive_message("msg-1")
+
+    assert users.messages.return_value.modify.call_args.kwargs["body"] == {
+        "addLabelIds": ["INBOX"],
+        "removeLabelIds": [],
+    }
+    assert result["verified"] is True
+    assert result["label_ids"] == ["INBOX", "UNREAD"]
+
+    dry_run = client.unarchive_message("msg-2", dry_run=True)
+    assert dry_run == {
+        "dry_run": True,
+        "gmail_id": "msg-2",
+        "addLabelIds": ["INBOX"],
+        "removeLabelIds": [],
+    }
+    assert users.messages.return_value.modify.call_count == 1
+
+
+def test_archive_and_unarchive_reject_unverified_label_state(tmp_path):
+    client, _, users = _client(tmp_path)
+    users.messages.return_value.modify.return_value.execute.return_value = {
+        "id": "msg-1",
+        "threadId": "thr-1",
+        "labelIds": ["INBOX"],
+    }
+
+    with pytest.raises(RuntimeError, match="did not leave INBOX absent"):
+        client.archive_message("msg-1")
+
+    users.messages.return_value.modify.return_value.execute.return_value = {
+        "id": "msg-1",
+        "threadId": "thr-1",
+        "labelIds": [],
+    }
+    with pytest.raises(RuntimeError, match="did not leave INBOX present"):
+        client.unarchive_message("msg-1")
+
+    users.messages.return_value.modify.return_value.execute.return_value = {
+        "id": "msg-1",
+        "threadId": "thr-1",
+    }
+    with pytest.raises(RuntimeError, match="did not return labelIds"):
+        client.archive_message("msg-1")
 
 
 def test_resolve_label_id_uses_label_list(tmp_path):

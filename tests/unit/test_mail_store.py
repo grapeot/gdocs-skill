@@ -104,6 +104,32 @@ def test_store_replaces_duplicate_gmail_id(tmp_path):
         store.close()
 
 
+def test_store_updates_labels_without_replacing_message_or_mime(tmp_path):
+    store = MailStore(tmp_path / "mail")
+    try:
+        raw = b"Subject: Hello\n\nBody"
+        message = store.save_message(
+            account="me@example.com",
+            gmail_id="msg-1",
+            thread_id="thr-1",
+            raw_bytes=raw,
+            metadata=_metadata(),
+        )
+        original_downloaded_at = message.downloaded_at
+
+        assert store.update_message_labels("msg-1", ["UNREAD", "STARRED"]) is True
+        matches = store.find_messages(gmail_id="msg-1")
+        assert len(matches) == 1
+        assert matches[0].labels == ["UNREAD", "STARRED"]
+        assert matches[0].downloaded_at == original_downloaded_at
+        assert message.mime_path.read_bytes() == raw
+
+        assert store.update_message_labels("missing", ["INBOX"]) is False
+        assert store.has_message("missing") is False
+    finally:
+        store.close()
+
+
 def test_store_reads_body_and_exports_markdown(tmp_path):
     store = MailStore(tmp_path / "mail")
     try:

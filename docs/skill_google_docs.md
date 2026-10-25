@@ -240,6 +240,7 @@ python -m gdocs gmail reply --gmail-id MSG_ID --body-file reply.md --attach char
 
 # Message state
 python -m gdocs gmail archive GMAIL_ID
+python -m gdocs gmail unarchive GMAIL_ID
 python -m gdocs gmail trash GMAIL_ID --dry-run
 python -m gdocs gmail mark-read GMAIL_ID
 python -m gdocs gmail mark-unread GMAIL_ID
@@ -251,7 +252,7 @@ python -m gdocs gmail label remove GMAIL_ID --label INBOX
 ```
 
 Key semantics:
-- `archive` removes the `INBOX` label. Gmail does not have an Archive folder.
+- `archive` removes the `INBOX` label; `unarchive` restores it. Gmail does not have an Archive folder. Both verify the returned labels and update an already-cached message's `labels_json`; they do not create cache rows or rewrite MIME. Existing Markdown exports remain snapshots until explicit `--force` re-export.
 - `trash` calls Gmail's recoverable trash endpoint.
 - `label` accepts system label names (`INBOX`, `UNREAD`, `STARRED`, etc.), raw label IDs, or user label names.
 - `--body-format` accepts `text`, `html`, `markdown`, or `md`. `html` sends the file verbatim as `text/html`. `markdown`/`md` are converted to simple HTML (headings, bold/italic, inline code, links, lists; content is HTML-escaped first, so raw HTML in a Markdown file is inert). Plain `text` stays plain.
@@ -259,7 +260,7 @@ Key semantics:
 - `reply --draft` creates a real draft in the original Gmail thread and never sends. It preserves `In-Reply-To`, `References`, and Gmail `threadId`; `--reply-all` retains existing participants while excluding the authenticated account.
 - `reply --draft` and `reply --dry-run` are mutually exclusive: the former writes a server draft, while the latter performs no Gmail mutation.
 - `--attach` accepts one or more file paths and is supported by `draft`, `send`, and `reply`. Each file is inline-attached with auto-detected MIME type. The output includes `attachment_count` and per-file `name`/`size`. This is equivalent to `mail draft --attach` in Outlook Skill.
-- `--dry-run` is available on Gmail send, reply, archive, trash, mark-read, mark-unread, label apply, and label remove.
+- `--dry-run` is available on Gmail send, reply, archive, unarchive, trash, mark-read, mark-unread, label apply, and label remove.
 - `inspect` parses the cached raw `.eml` for `Message-ID`, `In-Reply-To`, `References`, `Subject`, `From`, `To`, `Cc`, and `Date`, plus `raw_header_text` for direct experiment comparison. With `--thread`, it lists only same-thread messages already in SQLite and `messages/`.
 - `export-md --output-dir` refuses paths outside `data/mail/` unless `--unsafe-output-dir` is set. Treat exported Markdown as private email data.
 

@@ -93,8 +93,16 @@ def run_gmail_command(
                 dry_run=bool(data.get("dry_run", False)),
                 **kwargs,
             )
-        if command == "archive":
-            return gmail.archive_message(str(data["gmail_id"]), dry_run=bool(data.get("dry_run", False)))
+        if command in ("archive", "unarchive"):
+            method = gmail.archive_message if command == "archive" else gmail.unarchive_message
+            result = method(str(data["gmail_id"]), dry_run=bool(data.get("dry_run", False)))
+            labels = result.get("label_ids")
+            result["local_cache_updated"] = (
+                store.update_message_labels(str(result["gmail_id"]), [str(label) for label in labels])
+                if isinstance(labels, list)
+                else False
+            )
+            return result
         if command == "trash":
             return gmail.trash_message(str(data["gmail_id"]), dry_run=bool(data.get("dry_run", False)))
         if command == "mark-read":

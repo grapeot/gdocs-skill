@@ -461,12 +461,36 @@ class GmailClient:
                 "gmail_id": result.get("id", gmail_id),
                 "thread_id": result.get("threadId", ""),
                 "label_ids": result.get("labelIds", []),
+                "label_ids_present": "labelIds" in result,
             }
         except HttpError as exc:
             raise RuntimeError(_http_error_message(f"Failed to modify Gmail message '{gmail_id}'", exc)) from exc
 
+    def _set_inbox_membership(self, gmail_id: str, *, inbox: bool, dry_run: bool) -> dict[str, object]:
+        result = self.modify_message(
+            gmail_id,
+            add_label_ids=["INBOX"] if inbox else [],
+            remove_label_ids=[] if inbox else ["INBOX"],
+            dry_run=dry_run,
+        )
+        if dry_run:
+            return result
+        if result.get("label_ids_present") is not True:
+            raise RuntimeError(f"Gmail message '{gmail_id}' modification did not return labelIds")
+        labels = result.get("label_ids", [])
+        if not isinstance(labels, list) or ("INBOX" in labels) != inbox:
+            expected = "present" if inbox else "absent"
+            raise RuntimeError(
+                f"Gmail message '{gmail_id}' modification did not leave INBOX {expected}: {labels!r}"
+            )
+        result["verified"] = True
+        return result
+
     def archive_message(self, gmail_id: str, dry_run: bool = False) -> dict[str, object]:
-        return self.modify_message(gmail_id, remove_label_ids=["INBOX"], dry_run=dry_run)
+        return self._set_inbox_membership(gmail_id, inbox=False, dry_run=dry_run)
+
+    def unarchive_message(self, gmail_id: str, dry_run: bool = False) -> dict[str, object]:
+        return self._set_inbox_membership(gmail_id, inbox=True, dry_run=dry_run)
 
     def mark_read(self, gmail_id: str, dry_run: bool = False) -> dict[str, object]:
         return self.modify_message(gmail_id, remove_label_ids=["UNREAD"], dry_run=dry_run)

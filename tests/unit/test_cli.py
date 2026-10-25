@@ -573,3 +573,78 @@ def test_gmail_archive_dry_run(capsys, tmp_path):
     assert code == 0
     gmail.archive_message.assert_called_once_with("msg-1", dry_run=True)
     assert json.loads(capsys.readouterr().out)["dry_run"] is True
+
+
+def test_gmail_unarchive_dry_run(capsys, tmp_path):
+    with patch("gdocs.__main__.GmailClient") as gmail_cls, patch("gdocs.__main__.MailStore"):
+        gmail = gmail_cls.return_value
+        gmail.unarchive_message.return_value = {"dry_run": True, "gmail_id": "msg-1"}
+
+        code = main([
+            "--mail-data-dir",
+            str(tmp_path / "mail"),
+            "gmail",
+            "unarchive",
+            "msg-1",
+            "--dry-run",
+        ])
+
+    assert code == 0
+    gmail.unarchive_message.assert_called_once_with("msg-1", dry_run=True)
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["dry_run"] is True
+    assert payload["local_cache_updated"] is False
+
+
+def test_gmail_archive_updates_cached_labels(capsys, tmp_path):
+    with patch("gdocs.__main__.GmailClient") as gmail_cls, patch("gdocs.__main__.MailStore") as store_cls:
+        gmail = gmail_cls.return_value
+        store = store_cls.return_value
+        gmail.archive_message.return_value = {
+            "dry_run": False,
+            "gmail_id": "msg-1",
+            "label_ids": ["UNREAD"],
+            "verified": True,
+        }
+        store.update_message_labels.return_value = True
+
+        code = main([
+            "--mail-data-dir",
+            str(tmp_path / "mail"),
+            "gmail",
+            "archive",
+            "msg-1",
+        ])
+
+    assert code == 0
+    store.update_message_labels.assert_called_once_with("msg-1", ["UNREAD"])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["verified"] is True
+    assert payload["local_cache_updated"] is True
+
+
+def test_gmail_unarchive_updates_cached_labels(capsys, tmp_path):
+    with patch("gdocs.__main__.GmailClient") as gmail_cls, patch("gdocs.__main__.MailStore") as store_cls:
+        gmail = gmail_cls.return_value
+        store = store_cls.return_value
+        gmail.unarchive_message.return_value = {
+            "dry_run": False,
+            "gmail_id": "msg-1",
+            "label_ids": ["INBOX", "UNREAD"],
+            "verified": True,
+        }
+        store.update_message_labels.return_value = False
+
+        code = main([
+            "--mail-data-dir",
+            str(tmp_path / "mail"),
+            "gmail",
+            "unarchive",
+            "msg-1",
+        ])
+
+    assert code == 0
+    store.update_message_labels.assert_called_once_with("msg-1", ["INBOX", "UNREAD"])
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["verified"] is True
+    assert payload["local_cache_updated"] is False
