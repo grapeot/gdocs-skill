@@ -202,7 +202,7 @@ python -m gdocs calendar list-events --time-min "2026-05-20T00:00:00-07:00" --ti
 | `calendar list-events --time-min ISO [--time-max ISO] [--calendar-id ID] [--max-results N]` | List Calendar events ordered by start time |
 | `slides inspect SOURCE [--page N]...` | List each page's elements (id, kind, text, position and size in points) and speaker notes |
 | `slides backup SOURCE --output-dir DIR` | Save the API JSON plus PDF and PPTX exports, with sha256 hashes and the revision ID |
-| `slides apply SOURCE --spec FILE [--dry-run]` | Apply a page-scoped edit spec in one batch guarded by the revision read at start |
+| `slides apply SOURCE --spec FILE [--dry-run] [--presentations-scope]` | Apply a page-scoped edit spec in one batch, guarded by per-page fingerprints and the deck revision |
 
 All commands output JSON to stdout. Errors go to stderr as `{"error": ..., "status_code": ..., "response": ...}`. Exit code 0 on success, 1 on error.
 
@@ -216,7 +216,7 @@ Headings (H1–H3), bold, italic, bold+italic, inline code, hyperlinks, unordere
 - OAuth scopes: `documents` (Docs content read/write), `drive.file` (file-level access only), `gmail.modify` (Gmail read/send/label operations), and `calendar.events` (Calendar event create/list operations)
 - Token auto-refresh; automatic re-authorization if refresh fails
 - Retries on transient API errors (HTTP 429 and 5xx) with exponential backoff (1s, 2s, 4s)
-- `slides apply` refuses specs that touch elements outside the named pages, and sends its batch with `requiredRevisionId`, so a co-author's concurrent edit makes the write fail instead of being overwritten. To insert a local image it uploads a temporary Drive copy, opens it to anyone with the link so Slides can fetch it, and deletes it right after the batch, including when the batch fails
+- `slides apply` refuses specs that touch elements outside the named pages. With `page_fingerprints` from `inspect` it refuses if a target page changed since you looked at it, and it sends the batch with `requiredRevisionId`, so a co-author's edit makes the write fail instead of being overwritten. To insert a local image it uploads a temporary Drive copy, opens it to anyone with the link so Slides can fetch it, and deletes it right after the batch, including when the batch fails
 - Gmail cache stored in `data/mail/` by default — excluded from git because it contains private email data
 
 The global `--mail-data-dir` flag overrides the Gmail cache location. The default layout is `data/mail/messages/` for raw `.eml`, `data/mail/markdown/` for exports, and `data/mail/mail.db` for SQLite metadata. `gmail inspect` reads only this cache, including thread summaries only for messages already present locally. `gmail export-md --output-dir` refuses paths outside `data/mail/` unless `--unsafe-output-dir` is set, because exported Markdown contains private email bodies.

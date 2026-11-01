@@ -249,6 +249,10 @@ def build_parser() -> argparse.ArgumentParser:
     _ = slides_apply.add_argument("source", help="Presentation ID or Google Slides URL")
     _ = slides_apply.add_argument("--spec", type=Path, required=True)
     _ = slides_apply.add_argument("--dry-run", action="store_true")
+    _ = slides_apply.add_argument(
+        "--presentations-scope", action="store_true",
+        help="Request the presentations scope (one-time reauthorization) to edit decks this app did not create",
+    )
     _ = slides_apply.add_argument("--auth-timeout", type=int, default=120)
 
     calendar_parser = subparsers.add_parser("calendar")

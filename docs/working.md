@@ -6,7 +6,8 @@
 
 - Added `slides inspect`, `slides backup` and `slides apply` for page-scoped Google Slides edits. A collaborator was editing a shared deck while three pages needed new layout and speaker notes; re-uploading a PPTX would have rewritten every page, so edits now go through the Slides API, limited to the pages a JSON spec names.
 - `apply` validates the spec against the live deck before any upload, sends one `batchUpdate` with `requiredRevisionId`, and deletes temporary Drive image uploads in a `finally` block. Verified live on a scratch deck: text, move, text box, image (still present after the temporary Drive file was deleted), notes, a stale-revision rejection, and backup exports.
-- The existing `drive.file` scope was enough for a deck this app created; only the Slides API had to be enabled in the Cloud project.
+- The existing `drive.file` scope was enough for a deck this app created; only the Slides API had to be enabled in the Cloud project. Decks created elsewhere need `--presentations-scope`.
+- Review fixes: per-page fingerprints (signed image URLs excluded) so edits between `inspect` and `apply` on target pages are caught without blocking edits elsewhere; rotated/flipped elements translate only; image paths, element types and object ids are validated before upload; random generated ids; cleanup deletes each upload independently, revokes the public link if a delete fails, and keeps the original error; backups never overwrite a non-empty directory; fail closed without a revisionId.
 
 ### 2026-10-25
 

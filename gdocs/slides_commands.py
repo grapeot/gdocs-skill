@@ -17,15 +17,18 @@ def run_slides_command(
     secrets_dir: Path,
     slides_client_cls: type[SlidesClient],
 ) -> object:
-    auth_timeout = int(str(data.get("auth_timeout") or 120))
+    auth_timeout = int(str(data["auth_timeout"])) if data.get("auth_timeout") is not None else 120
     if auth_timeout <= 0:
         raise ValueError("--auth-timeout must be positive")
     presentation_id, _ = parse_source(str(data["source"]))
     command = str(data["slides_command"])
     spec = None
     if command == "apply":
-        spec = json.loads(Path(str(data["spec"])).read_text(encoding="utf-8"))
-    client = slides_client_cls(secrets_dir, auth_timeout=auth_timeout)
+        spec = json.loads(Path(str(data["spec"])).read_text(encoding="utf-8"), object_pairs_hook=_no_duplicate_keys)
+    kwargs = {"auth_timeout": auth_timeout}
+    if data.get("presentations_scope"):
+        kwargs["presentations_scope"] = True
+    client = slides_client_cls(secrets_dir, **kwargs)
     if spec is not None:
         return client.apply(presentation_id, spec, dry_run=bool(data.get("dry_run")))
     if command == "inspect":
@@ -34,3 +37,12 @@ def run_slides_command(
     if command == "backup":
         return client.backup(presentation_id, Path(str(data["output_dir"])))
     raise RuntimeError("Unknown Slides command")
+
+
+def _no_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"Duplicate key {key!r} in spec")
+        result[key] = value
+    return result
