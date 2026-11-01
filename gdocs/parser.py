@@ -235,6 +235,22 @@ def build_parser() -> argparse.ArgumentParser:
         _ = command_parser.add_argument("--label", required=True)
         _ = command_parser.add_argument("--dry-run", action="store_true")
 
+    slides_parser = subparsers.add_parser("slides", help="Page-scoped Google Slides inspection, backup and edits")
+    slides_subparsers = slides_parser.add_subparsers(dest="slides_command", required=True)
+    slides_inspect = slides_subparsers.add_parser("inspect", help="List elements and speaker notes per page")
+    _ = slides_inspect.add_argument("source", help="Presentation ID or Google Slides URL")
+    _ = slides_inspect.add_argument("--page", type=int, action="append", help="1-based page number; repeatable")
+    _ = slides_inspect.add_argument("--auth-timeout", type=int, default=120)
+    slides_backup = slides_subparsers.add_parser("backup", help="Save API JSON, PDF and PPTX exports with hashes")
+    _ = slides_backup.add_argument("source", help="Presentation ID or Google Slides URL")
+    _ = slides_backup.add_argument("--output-dir", type=Path, required=True)
+    _ = slides_backup.add_argument("--auth-timeout", type=int, default=120)
+    slides_apply = slides_subparsers.add_parser("apply", help="Apply a page-scoped JSON spec in one guarded batch")
+    _ = slides_apply.add_argument("source", help="Presentation ID or Google Slides URL")
+    _ = slides_apply.add_argument("--spec", type=Path, required=True)
+    _ = slides_apply.add_argument("--dry-run", action="store_true")
+    _ = slides_apply.add_argument("--auth-timeout", type=int, default=120)
+
     calendar_parser = subparsers.add_parser("calendar")
     calendar_subparsers = calendar_parser.add_subparsers(dest="calendar_command", required=True)
 

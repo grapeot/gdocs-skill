@@ -19,6 +19,8 @@ from .gmail_client import GmailClient
 from .gmail_commands import run_gmail_command
 from .mail_store import MailStore
 from .parser import DEFAULT_DATA_DIR, DEFAULT_SECRETS_DIR, build_parser
+from .slides_client import SlidesClient
+from .slides_commands import run_slides_command
 
 
 def run_command(args: argparse.Namespace) -> object:
@@ -33,6 +35,8 @@ def run_command(args: argparse.Namespace) -> object:
             file_id, data["output_dir"], resource_key=resource_key,
             export_format=data["export_format"], dry_run=data["dry_run"],
         )
+    if command == "slides":
+        return run_slides_command(data, secrets_dir, slides_client_cls=SlidesClient)
     if command == "calendar":
         return run_calendar_command(
             data,

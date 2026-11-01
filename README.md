@@ -13,6 +13,7 @@ CLI tool for Google Docs, Gmail, and Calendar automation via the official Python
 - Download, search, read, export, inspect cached headers, draft, send, reply to, archive, trash, and label Gmail messages, including reply-all drafts in existing threads
 - Create Calendar events with invites and list upcoming Calendar events
 - Download Drive files and recursively download folder trees, with Google Workspace exports
+- Edit chosen pages of a Google Slides deck without touching the rest: inspect elements and speaker notes, back up the deck, and apply a page-scoped JSON spec in one revision-guarded batch
 
 ## Quick install
 
@@ -41,6 +42,7 @@ This repo uses a **bring-your-own OAuth client** model. You create a Google Clou
 1. Search for "Google Docs API" in the console search bar and click **ENABLE**
 2. Search for "Google Drive API" and click **ENABLE**
 3. Search for "Gmail API" and click **ENABLE**
+4. Search for "Google Slides API" and click **ENABLE** (only needed for the `slides` commands)
 
 Verify at the [API Dashboard](https://console.cloud.google.com/apis/dashboard) — all enabled APIs should appear there.
 
@@ -198,6 +200,9 @@ python -m gdocs calendar list-events --time-min "2026-05-20T00:00:00-07:00" --ti
 | `gmail label remove GMAIL_ID --label LABEL [--dry-run]` | Remove a label |
 | `calendar create-event --summary S --start ISO --end ISO [--attendee EMAIL] [--calendar-id ID] [--description D] [--location L] [--timezone TZ]` | Create a Calendar event and send attendee updates |
 | `calendar list-events --time-min ISO [--time-max ISO] [--calendar-id ID] [--max-results N]` | List Calendar events ordered by start time |
+| `slides inspect SOURCE [--page N]...` | List each page's elements (id, kind, text, position and size in points) and speaker notes |
+| `slides backup SOURCE --output-dir DIR` | Save the API JSON plus PDF and PPTX exports, with sha256 hashes and the revision ID |
+| `slides apply SOURCE --spec FILE [--dry-run]` | Apply a page-scoped edit spec in one batch guarded by the revision read at start |
 
 All commands output JSON to stdout. Errors go to stderr as `{"error": ..., "status_code": ..., "response": ...}`. Exit code 0 on success, 1 on error.
 
@@ -211,6 +216,7 @@ Headings (H1–H3), bold, italic, bold+italic, inline code, hyperlinks, unordere
 - OAuth scopes: `documents` (Docs content read/write), `drive.file` (file-level access only), `gmail.modify` (Gmail read/send/label operations), and `calendar.events` (Calendar event create/list operations)
 - Token auto-refresh; automatic re-authorization if refresh fails
 - Retries on transient API errors (HTTP 429 and 5xx) with exponential backoff (1s, 2s, 4s)
+- `slides apply` refuses specs that touch elements outside the named pages, and sends its batch with `requiredRevisionId`, so a co-author's concurrent edit makes the write fail instead of being overwritten. To insert a local image it uploads a temporary Drive copy, opens it to anyone with the link so Slides can fetch it, and deletes it right after the batch, including when the batch fails
 - Gmail cache stored in `data/mail/` by default — excluded from git because it contains private email data
 
 The global `--mail-data-dir` flag overrides the Gmail cache location. The default layout is `data/mail/messages/` for raw `.eml`, `data/mail/markdown/` for exports, and `data/mail/mail.db` for SQLite metadata. `gmail inspect` reads only this cache, including thread summaries only for messages already present locally. `gmail export-md --output-dir` refuses paths outside `data/mail/` unless `--unsafe-output-dir` is set, because exported Markdown contains private email bodies.

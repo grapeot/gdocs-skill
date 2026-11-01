@@ -297,6 +297,50 @@ Key semantics:
 - `update-event` is currently scoped to title changes. Reschedules/attendee edits aren't exposed via CLI yet — fall back to `delete-event` + `create-event`.
 - `list-events` requires `--time-min`. `--time-max` is optional but recommended to bound results.
 
+### Slides Commands
+
+All Slides commands live under `python -m gdocs slides ...` and take a presentation ID or a Google Slides URL. Pages are 1-based. Positions and sizes are in points (a 16:9 deck is 720 × 405 pt). They need the Google Slides API enabled in the Cloud project; the existing `drive.file` scope covers decks this app created, so no reauthorization is needed for those.
+
+```bash
+# See what is on pages 13-15: element ids, kinds, text, boxes, speaker notes
+python -m gdocs slides inspect "https://docs.google.com/presentation/d/ID/edit" --page 13 --page 14 --page 15
+
+# Back up before editing: presentation.json, export.pdf, export.pptx, manifest.json (hashes + revision)
+python -m gdocs slides backup ID --output-dir backups/deck_before_edit
+
+# Preview the batchUpdate requests, then apply
+python -m gdocs slides apply ID --spec edits.json --dry-run
+python -m gdocs slides apply ID --spec edits.json
+```
+
+Spec format. `pages` maps a page number to a list of ops; nothing outside these pages is touched.
+
+```json
+{"pages": {"13": [
+  {"op": "move", "element": "p8_i3", "x": 36, "y": 70, "w": 300, "keep_aspect": true},
+  {"op": "set_text", "element": "p8_i4", "text": "New caption", "font_size": 12, "color": "#555555"},
+  {"op": "add_text", "id": "p13_take", "text": "Review: ~26 h → under 3 h", "x": 380, "y": 70, "w": 300, "h": 40, "font_size": 18, "bold": true},
+  {"op": "add_image", "id": "p13_chart", "path": "charts/review_time.png", "x": 380, "y": 120, "w": 300, "h": 114},
+  {"op": "delete", "element": "p8_i9"},
+  {"op": "set_notes", "text": "Speaker notes, replacing whatever was there."}
+]}}
+```
+
+| Op | Fields | Notes |
+|----|--------|-------|
+| `set_text` | `element`, `text`, optional `font_size`, `bold`, `color` (#RRGGBB), `font_family`, `align` | Replaces all text. Style fields apply to the whole box; omit them to keep the box's default style |
+| `move` | `element`, any of `x`, `y`, `w`, `h`, optional `keep_aspect` | Absolute placement of the rendered box; `keep_aspect` derives `h` from `w` |
+| `delete` | `element` | Deletes the element |
+| `add_text` | `text`, `x`, `y`, `w`, `h`, optional `id` and the `set_text` style fields | Creates a text box |
+| `add_image` | `path`, `x`, `y`, `w`, `h`, optional `id` | Local image; see the temporary-upload note below |
+| `set_notes` | `text` | Replaces the page's speaker notes |
+
+Key semantics:
+- The spec is validated against the live deck before anything is uploaded or written: page out of range, unknown op, or an element that is not on its page aborts the run.
+- All requests go in one `batchUpdate` with `writeControl.requiredRevisionId` set to the revision read at the start (or `required_revision_id` from the spec). If anyone edits the deck in between, the API rejects the batch and nothing changes; re-run `inspect` and `apply`.
+- `add_image` uploads the file to Drive, grants anyone-with-link read so the Slides API can fetch it, and deletes the Drive copy after the batch (also on failure). The image stays in the deck; Slides stores its own copy at insertion.
+- `--dry-run` reads the deck and prints the requests; it never uploads or writes.
+
 ## Front Matter Contract (sync)
 
 `sync` reads and writes YAML front matter in the Markdown file:
