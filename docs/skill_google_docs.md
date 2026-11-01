@@ -297,6 +297,53 @@ Key semantics:
 - `update-event` is currently scoped to title changes. Reschedules/attendee edits aren't exposed via CLI yet — fall back to `delete-event` + `create-event`.
 - `list-events` requires `--time-min`. `--time-max` is optional but recommended to bound results.
 
+### Slides Commands
+
+All Slides commands live under `python -m gdocs slides ...` and take a presentation ID or a Google Slides URL. Pages are 1-based. Positions and sizes are in points (a 16:9 deck is 720 × 405 pt). They need the Google Slides API enabled in the Cloud project. `inspect` and `backup` read through `drive.readonly`. `apply` can write with the existing `drive.file` scope only to decks this app created (for example by uploading a PPTX through this tool); for a deck someone else created, add `--presentations-scope`, which triggers a one-time reauthorization. A 403/404 from `apply` says so.
+
+```bash
+# See what is on pages 13-15: element ids, kinds, text, boxes, speaker notes
+python -m gdocs slides inspect "https://docs.google.com/presentation/d/ID/edit" --page 13 --page 14 --page 15
+
+# Back up before editing: presentation.json, export.pdf, export.pptx, manifest.json (hashes + revision)
+python -m gdocs slides backup ID --output-dir backups/deck_before_edit
+
+# Preview the batchUpdate requests, then apply
+python -m gdocs slides apply ID --spec edits.json --dry-run
+python -m gdocs slides apply ID --spec edits.json
+```
+
+Spec format. `pages` maps a page number to a list of ops; nothing outside these pages is touched.
+
+```json
+{"page_fingerprints": {"13": "<fingerprint from inspect>"},
+ "pages": {"13": [
+  {"op": "move", "element": "p8_i3", "x": 36, "y": 70, "w": 300, "keep_aspect": true},
+  {"op": "set_text", "element": "p8_i4", "text": "New caption", "font_size": 12, "color": "#555555"},
+  {"op": "add_text", "id": "p13_take", "text": "Review: ~26 h → under 3 h", "x": 380, "y": 70, "w": 300, "h": 40, "font_size": 18, "bold": true},
+  {"op": "add_image", "id": "p13_chart", "path": "charts/review_time.png", "x": 380, "y": 120, "w": 300, "h": 114},
+  {"op": "delete", "element": "p8_i9"},
+  {"op": "set_notes", "text": "Speaker notes, replacing whatever was there."}
+]}}
+```
+
+| Op | Fields | Notes |
+|----|--------|-------|
+| `set_text` | `element`, `text`, optional `font_size`, `bold`, `color` (#RRGGBB), `font_family`, `align` | Replaces all text in a shape. New text usually inherits the style of the remaining paragraph; pass style fields when the look must match exactly, and check the render |
+| `move` | `element`, any of `x`, `y`, `w`, `h`, optional `keep_aspect` | Absolute placement of the rendered box; `keep_aspect` derives the missing side from the other. Elements that `inspect` marks `rotated` (rotated, sheared or flipped) can only be translated |
+| `delete` | `element` | Deletes the element |
+| `add_text` | `text`, `x`, `y`, `w`, `h`, optional `id` and the `set_text` style fields | Creates a text box. `id` must be 5–50 characters (letters, digits, `_ - :`) and new to the deck; without it a random id is generated, so re-running a spec does not collide |
+| `add_image` | `path`, `x`, `y`, `w`, `h`, optional `id` | Local image; see the temporary-upload note below |
+| `set_notes` | `text` | Replaces the page's speaker notes |
+
+Key semantics:
+- The spec is validated against the live deck before anything is uploaded or written: page out of range, unknown op, or an element that is not on its page aborts the run.
+- Two guards against overwriting a co-author. `inspect` prints a `fingerprint` per page (a hash of its elements and notes); put the target pages' fingerprints in `page_fingerprints` and `apply` refuses if any of those pages changed since you inspected them. Edits on other pages do not block you. Separately, the batch is sent with `writeControl.requiredRevisionId` set to the revision `apply` read (or `required_revision_id` from the spec), which catches edits during the few seconds of the apply itself. Without `page_fingerprints` or `required_revision_id`, `apply` warns that edits made between your `inspect` and `apply` go undetected.
+- `apply` refuses to write if the API returns no `revisionId` (no edit access), and sends nothing for an empty spec.
+- `add_image` takes PNG, JPEG or GIF up to 50 MB; every image path is checked before anything is uploaded. It uploads a temporary Drive copy, grants anyone-with-link read so the Slides API can fetch it, and deletes the copy after the batch, also on failure. If a delete fails, it revokes the public permission and reports the file id (`temporary_uploads_left_behind`, or a note on the raised error). The image stays in the deck; Slides stores its own copy at insertion. Workspace domains that forbid "anyone" sharing make `add_image` fail at the permission step.
+- `backup` refuses a non-empty output directory, so an earlier backup is never overwritten, and flags `revision_changed_during_backup` if the deck changed while exporting. Drive exports are capped at 10 MB; very image-heavy decks may fail the PPTX export.
+- `--dry-run` reads the deck and prints the requests; it never uploads or writes.
+
 ## Front Matter Contract (sync)
 
 `sync` reads and writes YAML front matter in the Markdown file:
