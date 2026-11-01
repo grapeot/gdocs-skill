@@ -449,7 +449,9 @@ class SlidesClient:
         except BaseException as exc:
             left = self._cleanup(uploaded)
             if left:
-                exc.add_note(f"Temporary Drive uploads not deleted (public link revoked if possible): {left}")
+                # Same effect as BaseException.add_note (3.11+), kept compatible with 3.10.
+                exc.__notes__ = [*getattr(exc, "__notes__", []),
+                                 f"Temporary Drive uploads not deleted (public link revoked if possible): {left}"]
             raise
         left = self._cleanup(uploaded)
         return {"success": True, "request_count": len(requests), "previous_revision_id": revision,
