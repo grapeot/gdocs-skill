@@ -36,9 +36,16 @@ def run_command(args: argparse.Namespace) -> object:
                 Path(data["path"]), name=data["name"], folder_id=data["folder_id"],
                 dry_run=data["dry_run"],
             )
-            if data.get("share") and not data["dry_run"] and result.get("share_target_id"):
-                shared = client.share(str(result["share_target_id"]), str(data["share"]), role=data["role"])
-                result["share"] = shared
+            if data.get("share") and not data["dry_run"] and result.get("success"):
+                # Keep the upload result visible even if sharing fails, so nobody re-uploads.
+                target = result.get("share_target_id")
+                try:
+                    if not target:
+                        raise RuntimeError("Upload returned no id to share")
+                    result["share"] = client.share(str(target), str(data["share"]), role=data["role"])
+                except Exception as exc:
+                    result["share"] = {"success": False, "error": str(exc)}
+                    result["success"] = False
             return result
         file_id, resource_key = parse_source(data["source"])
         return client.download(

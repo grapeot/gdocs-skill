@@ -290,7 +290,7 @@ def test_gmail_send_dry_run_reads_body_file(capsys, tmp_path):
         bcc=[],
         subject="Hello",
         body_text="Hello",
-        body_format="html",
+        body_format="text",
         dry_run=True,
         attachments=None,
     )
@@ -323,7 +323,7 @@ def test_gmail_draft_reads_body_file_without_recipient(capsys, tmp_path):
         bcc=[],
         subject="Hello",
         body_text="Hello",
-        body_format="html",
+        body_format="text",
         attachments=None,
     )
     store_cls.return_value.close.assert_called_once_with()
@@ -358,7 +358,7 @@ def test_gmail_reply_draft_dispatches_reply_all_without_sending(capsys, tmp_path
     gmail.create_reply_draft.assert_called_once_with(
         gmail_id="msg-1",
         body_text="Reply",
-        body_format="html",
+        body_format="text",
         to=None,
         cc=None,
         reply_all=True,
@@ -648,3 +648,24 @@ def test_gmail_unarchive_updates_cached_labels(capsys, tmp_path):
     payload = json.loads(capsys.readouterr().out)
     assert payload["verified"] is True
     assert payload["local_cache_updated"] is False
+
+
+@pytest.mark.parametrize("filename,flag,expected", [
+    ("body.md", None, "markdown"),
+    ("body.markdown", None, "markdown"),
+    ("body.txt", None, "text"),
+    ("body.html", None, "html"),
+    ("body", None, "html"),
+    ("body.md", "html", "html"),
+    ("body.html", "md", "markdown"),
+])
+def test_gmail_body_format_inferred_from_extension(tmp_path, capsys, filename, flag, expected):
+    body = tmp_path / filename
+    body.write_text("Hello")
+    argv = ["gmail", "send", "--to", "a@example.com", "--subject", "Hi", "--body-file", str(body), "--dry-run"]
+    if flag:
+        argv += ["--body-format", flag]
+    with patch("gdocs.__main__.GmailClient") as gmail_cls, patch("gdocs.__main__.MailStore"):
+        gmail_cls.return_value.send_message.return_value = {"dry_run": True}
+        assert main(argv) == 0
+    assert gmail_cls.return_value.send_message.call_args.kwargs["body_format"] == expected

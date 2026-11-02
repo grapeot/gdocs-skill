@@ -200,6 +200,7 @@ python -m gdocs calendar list-events --time-min "2026-05-20T00:00:00-07:00" --ti
 | `gmail label remove GMAIL_ID --label LABEL [--dry-run]` | Remove a label |
 | `calendar create-event --summary S --start ISO --end ISO [--attendee EMAIL] [--calendar-id ID] [--description D] [--location L] [--timezone TZ]` | Create a Calendar event and send attendee updates |
 | `calendar list-events --time-min ISO [--time-max ISO] [--calendar-id ID] [--max-results N]` | List Calendar events ordered by start time |
+| `drive upload PATH [--name N] [--folder-id ID] [--share EMAIL --role R] [--dry-run]` | Upload a file, or mirror a directory into a new Drive folder; optionally share it with one user |
 | `slides inspect SOURCE [--page N]...` | List each page's elements (id, kind, text, position and size in points) and speaker notes |
 | `slides backup SOURCE --output-dir DIR` | Save the API JSON plus PDF and PPTX exports, with sha256 hashes and the revision ID |
 | `slides apply SOURCE --spec FILE [--dry-run] [--presentations-scope]` | Apply a page-scoped edit spec in one batch, guarded by per-page fingerprints and the deck revision |

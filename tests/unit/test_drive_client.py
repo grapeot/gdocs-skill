@@ -205,7 +205,7 @@ def test_cli_upload_with_share(tmp_path):
     src.write_bytes(b"zip")
     with patch("gdocs.__main__.DriveClient") as cls:
         cls.return_value.upload.return_value = {"success": True, "folder_id": "fold", "share_target_id": "file-1"}
-        cls.return_value.share.return_value = {"success": True, "file_id": "fold"}
+        cls.return_value.share.return_value = {"success": True, "file_id": "file-1"}
         assert main(["drive", "upload", str(src), "--share", "partner@example.com", "--role", "writer"]) == 0
     cls.return_value.share.assert_called_once_with("file-1", "partner@example.com", role="writer")
 
@@ -258,3 +258,95 @@ def test_normal_auth_keeps_optional_grants(tmp_path):
     with patch("gdocs.auth.Credentials.from_authorized_user_file", return_value=MagicMock(valid=True)) as load:
         get_credentials(tmp_path)
     assert DRIVE_READONLY in load.call_args.args[1]
+
+
+
+def recording_create(ids):
+    """files().create stub that records each body and returns ids in order."""
+    calls = []
+    it = iter(ids)
+
+    def create(**kwargs):
+        calls.append(kwargs.get("body", {}))
+        request = MagicMock()
+        request.execute.return_value = {"id": next(it), "name": kwargs.get("body", {}).get("name")}
+        return request
+    return create, calls
+
+
+def test_upload_directory_maps_parents_and_renames_top(tmp_path):
+    c = client()
+    root = tmp_path / "handoff"
+    (root / "sub").mkdir(parents=True)
+    (root / "README.md").write_text("hi")
+    (root / "sub" / "code.py").write_text("print(1)")
+    create, calls = recording_create(["top", "readme", "sub", "code"])
+    c.drive.files.return_value.create.side_effect = create
+    result = c.upload(root, name="renamed")
+    assert calls[0] == {"name": "renamed", "mimeType": FOLDER}
+    by_name = {body["name"]: body for body in calls}
+    assert by_name["README.md"]["parents"] == ["top"]
+    assert by_name["sub"]["parents"] == ["top"]
+    assert by_name["code.py"]["parents"] == ["sub"]
+    assert result["share_target_id"] == "top"
+
+
+def test_upload_skips_symlinks_and_reports_them(tmp_path):
+    c = client()
+    root = tmp_path / "handoff"
+    (root / "sub").mkdir(parents=True)
+    (root / "real.txt").write_text("ok")
+    secret = tmp_path / "secret.env"
+    secret.write_text("KEY=1")
+    (root / "link.env").symlink_to(secret)
+    (root / "sub" / "loop").symlink_to(root)
+    plan = c.upload(root, dry_run=True)
+    assert [f["name"] for f in plan["files"]] == ["real.txt", "sub"]
+    assert {Path(item["path"]).name for item in plan["skipped"]} == {"link.env", "loop"}
+    with pytest.raises(ValueError, match="symlink"):
+        c.upload(root / "link.env")
+
+
+def test_upload_midway_failure_reports_created_items(tmp_path):
+    c = client()
+    root = tmp_path / "handoff"
+    root.mkdir()
+    (root / "a.txt").write_text("a")
+    (root / "b.txt").write_text("b")
+    create, _ = recording_create(["top", "file-a"])
+    c.drive.files.return_value.create.side_effect = create
+    real_upload = c._upload_file
+
+    def flaky(path, name, parent):
+        if name == "b.txt":
+            raise OSError("disk read error")
+        return real_upload(path, name, parent)
+    c._upload_file = flaky
+    result = c.upload(root)
+    assert not result["success"]
+    assert result["folder_id"] == "top"
+    assert [f["id"] for f in result["files"]] == ["file-a"]
+    assert result["failed"]["path"].endswith("b.txt") and "disk read error" in result["failed"]["error"]
+
+
+def test_cli_share_failure_keeps_upload_result(tmp_path, capsys):
+    src = tmp_path / "handoff.zip"
+    src.write_bytes(b"zip")
+    with patch("gdocs.__main__.DriveClient") as cls:
+        cls.return_value.upload.return_value = {"success": True, "share_target_id": "file-1",
+                                                "files": [{"id": "file-1"}]}
+        cls.return_value.share.side_effect = RuntimeError("not a Google account")
+        code = main(["drive", "upload", str(src), "--share", "partner@example.com"])
+    out = json.loads(capsys.readouterr().out)
+    assert code == 1
+    assert out["files"] == [{"id": "file-1"}]
+    assert out["share"] == {"success": False, "error": "not a Google account"}
+
+
+def test_cli_share_requires_a_target(tmp_path, capsys):
+    src = tmp_path / "handoff.zip"
+    src.write_bytes(b"zip")
+    with patch("gdocs.__main__.DriveClient") as cls:
+        cls.return_value.upload.return_value = {"success": True, "share_target_id": None, "files": []}
+        assert main(["drive", "upload", str(src), "--share", "partner@example.com"]) == 1
+    cls.return_value.share.assert_not_called()

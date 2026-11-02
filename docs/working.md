@@ -6,7 +6,8 @@
 
 - Landed two changes that had been sitting uncommitted in a local checkout since late September.
 - Added `drive upload PATH [--name] [--folder-id] [--share EMAIL --role reader|writer|commenter] [--dry-run]`: a file uploads as one file; a directory becomes a Drive folder that mirrors the tree, skipping `.DS_Store`. `--share` now targets the uploaded file for a single-file upload and the created top folder for a directory upload; the original draft shared the destination folder instead of the file.
-- Gmail `draft`, `send` and `reply` now default to `--body-format html`. Plain text remains available when explicitly requested.
+- Gmail `draft`, `send` and `reply` default to HTML, but without `--body-format` the format now follows the body file's extension (`.md` → markdown, `.txt` → text, else html). A flat html default would have sent Markdown or text files verbatim as HTML, an irreversible mistake for `send`.
+- Review fixes for upload: symlinks are skipped (and a symlink source refused) so nothing outside the tree gets uploaded and shared; a midway failure returns everything already created plus the failing path; a share failure keeps the upload result; MIME type comes from the local file, not `--name`; docs cover notification emails and the `drive.file` limit on `--folder-id`.
 
 ### 2026-11-01
 

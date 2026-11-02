@@ -158,7 +158,7 @@ class DriveClient:
                 "files": [{k: v for k, v in item.items() if k not in {"resource_key", "md5"}} for item in plan]}
 
     def _upload_file(self, path: Path, name: str, parent_id: str | None) -> dict[str, Any]:
-        mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
+        mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         metadata: dict[str, Any] = {"name": name}
         if parent_id:
             metadata["parents"] = [parent_id]
@@ -180,17 +180,24 @@ class DriveClient:
     def upload(self, local_path: Path, *, name: str | None = None, folder_id: str | None = None,
                dry_run: bool = False) -> dict[str, Any]:
         root = local_path.expanduser().absolute()
+        if root.is_symlink():
+            raise ValueError(f"Refusing to upload a symlink: {root}")
         if not root.exists():
             raise FileNotFoundError(f"Upload source not found: {root}")
 
-        # Build a plan of entries before any write.
+        # Build a plan of entries before any write. Symlinks are never followed: they could
+        # point outside the tree (and get shared) or form loops.
         planned: list[dict[str, Any]] = []
+        skipped: list[dict[str, str]] = []
         if root.is_dir():
             def walk(directory: Path, relative: str) -> None:
                 for entry in sorted(directory.iterdir(), key=lambda p: p.name.casefold()):
+                    child_rel = f"{relative}/{entry.name}" if relative else entry.name
                     if entry.name in {".DS_Store"}:
                         continue
-                    child_rel = f"{relative}/{entry.name}" if relative else entry.name
+                    if entry.is_symlink():
+                        skipped.append({"path": str(entry), "reason": "symlink"})
+                        continue
                     planned.append({"path": entry, "name": entry.name, "relative": child_rel,
                                     "is_dir": entry.is_dir()})
                     if entry.is_dir():
@@ -202,18 +209,22 @@ class DriveClient:
 
         if dry_run:
             return {"success": True, "dry_run": True, "source": str(root),
+                    "top_folder": (name or root.name) if root.is_dir() else None,
                     "file_count": sum(not item["is_dir"] for item in planned),
                     "folder_count": sum(item["is_dir"] for item in planned),
-                    "files": [{"path": str(item["path"]), "name": item["name"]} for item in planned]}
+                    "files": [{"path": str(item["path"]), "name": item["name"]} for item in planned],
+                    "skipped": skipped}
 
+        # Directory upload nests under a new folder named after the local directory (or --name).
+        top_parent = folder_id
+        results: list[dict[str, Any]] = []
+        current = str(root)
         try:
-            # Directory upload nests under a new folder named after the local directory.
-            top_parent = folder_id
             if root.is_dir():
                 top_parent = self._create_folder(name or root.name, folder_id)
             folder_ids: dict[str, str] = {} if top_parent is None else {"": top_parent}
-            results: list[dict[str, Any]] = []
             for item in planned:
+                current = str(item["path"])
                 parent_rel = item["relative"].rsplit("/", 1)[0] if "/" in item["relative"] else ""
                 parent_id = folder_ids.get(parent_rel, folder_id)
                 if item["is_dir"]:
@@ -225,13 +236,19 @@ class DriveClient:
                     results.append({"name": uploaded.get("name", item["name"]), "type": "file",
                                     "id": uploaded.get("id"), "size": uploaded.get("size"),
                                     "link": uploaded.get("webViewLink")})
-            # --share targets what was created: the top folder for a directory, the file itself otherwise.
-            share_target = top_parent if root.is_dir() else (results[0]["id"] if results else None)
-            return {"success": True, "dry_run": False, "source": str(root),
-                    "folder_id": top_parent, "share_target_id": share_target,
-                    "uploaded_count": len(results), "files": results}
-        except HttpError as exc:
-            raise RuntimeError(_http_error_message(f"Failed to upload '{root}'", exc)) from exc
+        except Exception as exc:  # report what already exists in Drive instead of losing it
+            error = _http_error_message("Upload failed", exc) if isinstance(exc, HttpError) else str(exc)
+            if isinstance(exc, HttpError) and folder_id and getattr(exc, "status_code", None) in (403, 404):
+                error += (" (with the drive.file scope, --folder-id must be a folder this app created;"
+                          " omit it to upload to My Drive)")
+            return {"success": False, "dry_run": False, "source": str(root), "folder_id": top_parent,
+                    "uploaded_count": len(results), "files": results, "skipped": skipped,
+                    "failed": {"path": current, "error": error}}
+        # --share targets what was created: the top folder for a directory, the file itself otherwise.
+        share_target = top_parent if root.is_dir() else (results[0]["id"] if results else None)
+        return {"success": True, "dry_run": False, "source": str(root),
+                "folder_id": top_parent, "share_target_id": share_target,
+                "uploaded_count": len(results), "files": results, "skipped": skipped}
 
     def share(self, file_id: str, email: str, *, role: str = "reader") -> dict[str, Any]:
         valid_roles = {"reader", "writer", "commenter"}
