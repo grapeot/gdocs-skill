@@ -146,11 +146,11 @@ python -m gdocs gmail search "from:user@example.com newer_than:7d"
 python -m gdocs gmail inspect --gmail-id MSG_ID --thread
 
 # Send an email; use --dry-run first when testing
-python -m gdocs gmail draft --subject "Hello" --body-file body.md
-python -m gdocs gmail send --to user@example.com --subject "Hello" --body-file body.md --dry-run
+python -m gdocs gmail draft --subject "Hello" --body-file body.html
+python -m gdocs gmail send --to user@example.com --subject "Hello" --body-file body.html --dry-run
 
 # Save a reply-all draft in an existing Gmail thread without sending
-python -m gdocs gmail reply --gmail-id MSG_ID --body-file reply.md --reply-all --draft
+python -m gdocs gmail reply --gmail-id MSG_ID --body-file reply.html --reply-all --draft
 
 # Create a Calendar event and invite attendees
 python -m gdocs calendar create-event --summary "Planning" --start "2026-05-20T10:00:00-07:00" --end "2026-05-20T10:30:00-07:00" --attendee user@example.com
@@ -200,6 +200,7 @@ python -m gdocs calendar list-events --time-min "2026-05-20T00:00:00-07:00" --ti
 | `gmail label remove GMAIL_ID --label LABEL [--dry-run]` | Remove a label |
 | `calendar create-event --summary S --start ISO --end ISO [--attendee EMAIL] [--calendar-id ID] [--description D] [--location L] [--timezone TZ]` | Create a Calendar event and send attendee updates |
 | `calendar list-events --time-min ISO [--time-max ISO] [--calendar-id ID] [--max-results N]` | List Calendar events ordered by start time |
+| `drive upload PATH [--name N] [--folder-id ID] [--share EMAIL --role R] [--dry-run]` | Upload a file, or mirror a directory into a new Drive folder; optionally share it with one user |
 | `slides inspect SOURCE [--page N]...` | List each page's elements (id, kind, text, position and size in points) and speaker notes |
 | `slides backup SOURCE --output-dir DIR` | Save the API JSON plus PDF and PPTX exports, with sha256 hashes and the revision ID |
 | `slides apply SOURCE --spec FILE [--dry-run] [--presentations-scope]` | Apply a page-scoped edit spec in one batch, guarded by per-page fingerprints and the deck revision |

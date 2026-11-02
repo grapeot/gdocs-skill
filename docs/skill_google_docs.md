@@ -142,6 +142,38 @@ python -m gdocs image DOC_ID chart.png --width 468 --index 2050 --tab-id t.abc
 
 When inserting images that correspond to `![alt](path.png)` in a Markdown file: publish the Markdown first (alt text becomes plain text), then scan the doc for the alt text positions, and insert images from bottom to top to avoid index drift.
 
+### Drive Upload Commands
+
+Upload a local file or directory to Google Drive.
+
+```bash
+# Upload a single file (optionally into a folder, optionally grant access)
+python -m gdocs drive upload ./handoff.zip
+python -m gdocs drive upload ./handoff.zip --folder-id FOLDER_ID --name handoff.zip
+python -m gdocs drive upload ./handoff.zip --share partner@example.com --role writer
+
+# Upload a directory recursively (creates one Drive folder named after the local dir)
+python -m gdocs drive upload ./handoff --folder-id FOLDER_ID
+
+# Preview the plan without uploading
+python -m gdocs drive upload ./handoff --dry-run
+# Output: {"success": true, "dry_run": true, "top_folder": "handoff", "file_count": N, "folder_count": M,
+#          "files": [{"path", "name"}, ...], "skipped": [{"path", "reason": "symlink"}, ...]}
+
+# A real upload returns what was created
+# Output: {"success": true, "folder_id": "...", "share_target_id": "...", "uploaded_count": N,
+#          "files": [{"name", "type", "id", "size", "link"}, ...], "skipped": [...]}
+```
+
+- A file uploads as one file; a directory creates a Drive folder named after the local directory (or `--name`) and mirrors the tree, skipping `.DS_Store`. Other hidden files such as `.env` or `.git/` are uploaded, so check the dry-run list before sharing.
+- Symlinks are never followed: inside a directory they are skipped and listed under `skipped`; a symlink as the upload source is refused. This keeps files outside the tree from being uploaded and shared, and avoids symlink loops.
+- `--share` grants one user access after a successful upload: the uploaded file for a single-file upload, the created top folder for a directory upload. `--role` is `reader` (default), `writer`, or `commenter`. Google sends that user a notification email. It never makes anything publicly readable.
+- If sharing fails, the upload result is still printed with `share: {"success": false, "error": ...}` and the command exits 1, so you can retry the share instead of re-uploading.
+- If an upload fails midway, the command returns `success: false` with everything already created (`folder_id`, `files`) and the failing path under `failed`, and exits 1. Re-running uploads a fresh copy, so delete or reuse the partial folder first.
+- Uploaded files are created by the app, so `drive.file` covers them. `--folder-id` must be a folder this app created (or omit it to upload to My Drive); a folder you created in the browser is not writable under `drive.file` and fails with 403/404.
+- `--dry-run` prints the plan and makes no Drive writes.
+- Large files upload resumably. Uploading into a Shared Drive uses `supportsAllDrives`.
+
 ### Drive Download Commands
 
 Download individual files or recursive folder trees from Google Drive/Docs.
@@ -226,10 +258,10 @@ python -m gdocs gmail export-md --subject "budget" --force
 python -m gdocs gmail export-md --output-dir data/mail/custom_exports
 
 # Draft, send, and reply. Use --dry-run before real sends.
-python -m gdocs gmail draft --subject "Hello" --body-file body.md
-python -m gdocs gmail draft --to user@example.com --subject "Hello" --body-file body.md
-python -m gdocs gmail draft --to user@example.com --subject "Invoice" --body-file body.md --attach invoice.pdf
-python -m gdocs gmail send --to user@example.com --subject "Hello" --body-file body.md --dry-run
+python -m gdocs gmail draft --subject "Hello" --body-file body.html
+python -m gdocs gmail draft --to user@example.com --subject "Hello" --body-file body.html
+python -m gdocs gmail draft --to user@example.com --subject "Invoice" --body-file body.html --attach invoice.pdf
+python -m gdocs gmail send --to user@example.com --subject "Hello" --body-file body.html --dry-run
 python -m gdocs gmail send --to user@example.com --cc reviewer@example.com --subject "Status" --body-file report.html --body-format html
 python -m gdocs gmail draft --to user@example.com --subject "Hello" --body-file body.md --body-format markdown
 python -m gdocs gmail reply --gmail-id MSG_ID --body-file reply.md --draft --body-format markdown
@@ -255,7 +287,7 @@ Key semantics:
 - `archive` removes the `INBOX` label; `unarchive` restores it. Gmail does not have an Archive folder. Both verify the returned labels and update an already-cached message's `labels_json`; they do not create cache rows or rewrite MIME. Existing Markdown exports remain snapshots until explicit `--force` re-export.
 - `trash` calls Gmail's recoverable trash endpoint.
 - `label` accepts system label names (`INBOX`, `UNREAD`, `STARRED`, etc.), raw label IDs, or user label names.
-- `--body-format` accepts `text`, `html`, `markdown`, or `md`. `html` sends the file verbatim as `text/html`. `markdown`/`md` are converted to simple HTML (headings, bold/italic, inline code, links, lists; content is HTML-escaped first, so raw HTML in a Markdown file is inert). Plain `text` stays plain.
+- `--body-format` accepts `text`, `html`, `markdown`, or `md`. Without it the format follows the body file's extension: `.md`/`.markdown` → markdown, `.txt` → text, anything else (including `.html`) → html. This keeps HTML the default without sending a Markdown or text file verbatim as HTML, which would collapse newlines and swallow anything in angle brackets. `html` sends the file verbatim as `text/html`. `markdown`/`md` are converted to simple HTML (headings, bold/italic, inline code, links, lists; content is HTML-escaped first, so raw HTML in a Markdown file is inert). Plain `text` stays plain and is only for an explicit request.
 - `draft` creates a Gmail draft and never sends. `--to`, `--cc`, and `--bcc` are optional so agents can save no-recipient drafts for human review.
 - `reply --draft` creates a real draft in the original Gmail thread and never sends. It preserves `In-Reply-To`, `References`, and Gmail `threadId`; `--reply-all` retains existing participants while excluding the authenticated account.
 - `reply --draft` and `reply --dry-run` are mutually exclusive: the former writes a server draft, while the latter performs no Gmail mutation.

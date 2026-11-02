@@ -61,7 +61,7 @@ def run_gmail_command(
                 bcc=_list_arg(data.get("bcc")),
                 subject=str(data["subject"]),
                 body_text=body_path.read_text(encoding="utf-8"),
-                body_format=_normalize_body_format(str(data["body_format"])),
+                body_format=_body_format(data, body_path),
                 dry_run=bool(data.get("dry_run", False)),
                 attachments=_path_list(data.get("attach")),
             )
@@ -73,7 +73,7 @@ def run_gmail_command(
                 bcc=_list_arg(data.get("bcc")),
                 subject=str(data["subject"]),
                 body_text=body_path.read_text(encoding="utf-8"),
-                body_format=_normalize_body_format(str(data["body_format"])),
+                body_format=_body_format(data, body_path),
                 attachments=_path_list(data.get("attach")),
             )
         if command == "reply":
@@ -81,7 +81,7 @@ def run_gmail_command(
             kwargs = {
                 "gmail_id": str(data["gmail_id"]),
                 "body_text": body_path.read_text(encoding="utf-8"),
-                "body_format": _normalize_body_format(str(data["body_format"])),
+                "body_format": _body_format(data, body_path),
                 "to": _list_arg(data.get("to")) or None,
                 "cc": _list_arg(data.get("cc")) or None,
                 "reply_all": bool(data.get("reply_all", False)),
@@ -239,6 +239,23 @@ def _stored_message_json(message: StoredMessage) -> dict[str, object]:
         "mime_path": str(message.mime_path),
         "downloaded_at": message.downloaded_at,
     }
+
+
+def _body_format(data: dict[str, object], body_path: Path) -> str:
+    """Explicit --body-format wins; otherwise infer from the body file's extension.
+
+    HTML is the default, but a Markdown or plain-text file must never be sent
+    verbatim as text/html (newlines collapse, `<...>` disappears).
+    """
+    explicit = data.get("body_format")
+    if explicit:
+        return _normalize_body_format(str(explicit))
+    suffix = body_path.suffix.lower()
+    if suffix in {".md", ".markdown"}:
+        return "markdown"
+    if suffix == ".txt":
+        return "text"
+    return "html"
 
 
 def _normalize_body_format(value: str) -> str:

@@ -26,6 +26,15 @@ def build_parser() -> argparse.ArgumentParser:
     _ = drive_download.add_argument("--dry-run", action="store_true")
     _ = drive_download.add_argument("--auth-timeout", type=int, default=120)
 
+    drive_upload = drive_subparsers.add_parser("upload")
+    _ = drive_upload.add_argument("path", help="Local file or directory to upload")
+    _ = drive_upload.add_argument("--name", help="Drive file name (default: local basename)")
+    _ = drive_upload.add_argument("--folder-id", help="Destination folder ID (default: My Drive root)")
+    _ = drive_upload.add_argument("--share", help="Email to grant access to after upload")
+    _ = drive_upload.add_argument("--role", choices=["reader", "writer", "commenter"], default="reader")
+    _ = drive_upload.add_argument("--dry-run", action="store_true")
+    _ = drive_upload.add_argument("--auth-timeout", type=int, default=120)
+
     publish_parser = subparsers.add_parser("publish")
     _ = publish_parser.add_argument("file", type=Path)
     _ = publish_parser.add_argument("--title", required=True)
@@ -195,7 +204,8 @@ def build_parser() -> argparse.ArgumentParser:
     _ = gmail_send.add_argument("--bcc", action="append")
     _ = gmail_send.add_argument("--subject", required=True)
     _ = gmail_send.add_argument("--body-file", type=Path, required=True)
-    _ = gmail_send.add_argument("--body-format", choices=["text", "html", "markdown", "md"], default="text")
+    _ = gmail_send.add_argument("--body-format", choices=["text", "html", "markdown", "md"], default=None,
+        help="Default: inferred from the body file (.md/.markdown -> markdown, .txt -> text, else html)")
     _ = gmail_send.add_argument("--attach", action="append", type=Path)
     _ = gmail_send.add_argument("--dry-run", action="store_true")
 
@@ -205,13 +215,15 @@ def build_parser() -> argparse.ArgumentParser:
     _ = gmail_draft.add_argument("--bcc", action="append")
     _ = gmail_draft.add_argument("--subject", required=True)
     _ = gmail_draft.add_argument("--body-file", type=Path, required=True)
-    _ = gmail_draft.add_argument("--body-format", choices=["text", "html", "markdown", "md"], default="text")
+    _ = gmail_draft.add_argument("--body-format", choices=["text", "html", "markdown", "md"], default=None,
+        help="Default: inferred from the body file (.md/.markdown -> markdown, .txt -> text, else html)")
     _ = gmail_draft.add_argument("--attach", action="append", type=Path)
 
     gmail_reply = gmail_subparsers.add_parser("reply")
     _ = gmail_reply.add_argument("--gmail-id", required=True)
     _ = gmail_reply.add_argument("--body-file", type=Path, required=True)
-    _ = gmail_reply.add_argument("--body-format", choices=["text", "html", "markdown", "md"], default="text")
+    _ = gmail_reply.add_argument("--body-format", choices=["text", "html", "markdown", "md"], default=None,
+        help="Default: inferred from the body file (.md/.markdown -> markdown, .txt -> text, else html)")
     _ = gmail_reply.add_argument("--to", action="append")
     _ = gmail_reply.add_argument("--cc", action="append")
     _ = gmail_reply.add_argument("--attach", action="append", type=Path)
