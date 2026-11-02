@@ -28,10 +28,20 @@ def run_command(args: argparse.Namespace) -> object:
     secrets_dir = Path(data["secrets_dir"])
     command = str(data["command"])
     if command == "drive":
-        file_id, resource_key = parse_source(data["source"])
         if data["auth_timeout"] <= 0:
             raise ValueError("--auth-timeout must be positive")
-        return DriveClient(secrets_dir, auth_timeout=data["auth_timeout"]).download(
+        client = DriveClient(secrets_dir, auth_timeout=data["auth_timeout"])
+        if data["drive_command"] == "upload":
+            result = client.upload(
+                Path(data["path"]), name=data["name"], folder_id=data["folder_id"],
+                dry_run=data["dry_run"],
+            )
+            if data.get("share") and not data["dry_run"] and result.get("share_target_id"):
+                shared = client.share(str(result["share_target_id"]), str(data["share"]), role=data["role"])
+                result["share"] = shared
+            return result
+        file_id, resource_key = parse_source(data["source"])
+        return client.download(
             file_id, data["output_dir"], resource_key=resource_key,
             export_format=data["export_format"], dry_run=data["dry_run"],
         )

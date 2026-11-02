@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import mimetypes
 import os
 import re
 import tempfile
@@ -9,10 +10,11 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseDownload
+from googleapiclient.errors import HttpError
+from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 
 from .auth import get_credentials
-from .client import _retry_transient
+from .client import _http_error_message, _retry_transient
 
 DRIVE_READONLY = "https://www.googleapis.com/auth/drive.readonly"
 FOLDER = "application/vnd.google-apps.folder"
@@ -154,6 +156,100 @@ class DriveClient:
                 "downloaded_count": sum(item["status"] == "downloaded" for item in plan),
                 "total_bytes": sum(item.get("bytes", 0) for item in plan),
                 "files": [{k: v for k, v in item.items() if k not in {"resource_key", "md5"}} for item in plan]}
+
+    def _upload_file(self, path: Path, name: str, parent_id: str | None) -> dict[str, Any]:
+        mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
+        metadata: dict[str, Any] = {"name": name}
+        if parent_id:
+            metadata["parents"] = [parent_id]
+        media = MediaFileUpload(str(path), mimetype=mime, resumable=True)
+        return _retry_transient(lambda: self.drive.files().create(
+            body=metadata, media_body=media, fields="id,name,mimeType,size,webViewLink",
+            supportsAllDrives=True,
+        ).execute())
+
+    def _create_folder(self, name: str, parent_id: str | None) -> str:
+        metadata: dict[str, Any] = {"name": name, "mimeType": FOLDER}
+        if parent_id:
+            metadata["parents"] = [parent_id]
+        created = _retry_transient(lambda: self.drive.files().create(
+            body=metadata, fields="id", supportsAllDrives=True,
+        ).execute())
+        return str(created["id"])
+
+    def upload(self, local_path: Path, *, name: str | None = None, folder_id: str | None = None,
+               dry_run: bool = False) -> dict[str, Any]:
+        root = local_path.expanduser().absolute()
+        if not root.exists():
+            raise FileNotFoundError(f"Upload source not found: {root}")
+
+        # Build a plan of entries before any write.
+        planned: list[dict[str, Any]] = []
+        if root.is_dir():
+            def walk(directory: Path, relative: str) -> None:
+                for entry in sorted(directory.iterdir(), key=lambda p: p.name.casefold()):
+                    if entry.name in {".DS_Store"}:
+                        continue
+                    child_rel = f"{relative}/{entry.name}" if relative else entry.name
+                    planned.append({"path": entry, "name": entry.name, "relative": child_rel,
+                                    "is_dir": entry.is_dir()})
+                    if entry.is_dir():
+                        walk(entry, child_rel)
+            walk(root, "")
+        else:
+            planned.append({"path": root, "name": name or root.name, "relative": name or root.name,
+                            "is_dir": False})
+
+        if dry_run:
+            return {"success": True, "dry_run": True, "source": str(root),
+                    "file_count": sum(not item["is_dir"] for item in planned),
+                    "folder_count": sum(item["is_dir"] for item in planned),
+                    "files": [{"path": str(item["path"]), "name": item["name"]} for item in planned]}
+
+        try:
+            # Directory upload nests under a new folder named after the local directory.
+            top_parent = folder_id
+            if root.is_dir():
+                top_parent = self._create_folder(name or root.name, folder_id)
+            folder_ids: dict[str, str] = {} if top_parent is None else {"": top_parent}
+            results: list[dict[str, Any]] = []
+            for item in planned:
+                parent_rel = item["relative"].rsplit("/", 1)[0] if "/" in item["relative"] else ""
+                parent_id = folder_ids.get(parent_rel, folder_id)
+                if item["is_dir"]:
+                    new_id = self._create_folder(item["name"], parent_id)
+                    folder_ids[item["relative"]] = new_id
+                    results.append({"name": item["name"], "type": "folder", "id": new_id})
+                else:
+                    uploaded = self._upload_file(item["path"], item["name"], parent_id)
+                    results.append({"name": uploaded.get("name", item["name"]), "type": "file",
+                                    "id": uploaded.get("id"), "size": uploaded.get("size"),
+                                    "link": uploaded.get("webViewLink")})
+            # --share targets what was created: the top folder for a directory, the file itself otherwise.
+            share_target = top_parent if root.is_dir() else (results[0]["id"] if results else None)
+            return {"success": True, "dry_run": False, "source": str(root),
+                    "folder_id": top_parent, "share_target_id": share_target,
+                    "uploaded_count": len(results), "files": results}
+        except HttpError as exc:
+            raise RuntimeError(_http_error_message(f"Failed to upload '{root}'", exc)) from exc
+
+    def share(self, file_id: str, email: str, *, role: str = "reader") -> dict[str, Any]:
+        valid_roles = {"reader", "writer", "commenter"}
+        if role not in valid_roles:
+            raise ValueError("role must be one of: reader, writer, commenter")
+        try:
+            _retry_transient(lambda: self.drive.permissions().create(
+                fileId=file_id,
+                body={"type": "user", "role": role, "emailAddress": email},
+                sendNotificationEmail=True,
+                supportsAllDrives=True,
+            ).execute())
+            link = _retry_transient(lambda: self.drive.files().get(
+                fileId=file_id, fields="webViewLink", supportsAllDrives=True,
+            ).execute())
+            return {"success": True, "file_id": file_id, "link": link.get("webViewLink", "")}
+        except HttpError as exc:
+            raise RuntimeError(_http_error_message(f"Failed to share '{file_id}'", exc)) from exc
 
     def _download_file(self, item: dict[str, Any]) -> None:
         path = Path(item["path"])

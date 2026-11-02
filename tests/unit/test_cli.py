@@ -290,7 +290,7 @@ def test_gmail_send_dry_run_reads_body_file(capsys, tmp_path):
         bcc=[],
         subject="Hello",
         body_text="Hello",
-        body_format="text",
+        body_format="html",
         dry_run=True,
         attachments=None,
     )
@@ -323,7 +323,7 @@ def test_gmail_draft_reads_body_file_without_recipient(capsys, tmp_path):
         bcc=[],
         subject="Hello",
         body_text="Hello",
-        body_format="text",
+        body_format="html",
         attachments=None,
     )
     store_cls.return_value.close.assert_called_once_with()
@@ -358,7 +358,7 @@ def test_gmail_reply_draft_dispatches_reply_all_without_sending(capsys, tmp_path
     gmail.create_reply_draft.assert_called_once_with(
         gmail_id="msg-1",
         body_text="Reply",
-        body_format="text",
+        body_format="html",
         to=None,
         cc=None,
         reply_all=True,

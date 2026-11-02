@@ -163,6 +163,83 @@ def test_cli_failed_download_nonzero(capsys, tmp_path):
     assert not json.loads(capsys.readouterr().out)["success"]
 
 
+def test_upload_single_file_dry_run(tmp_path):
+    c = client()
+    src = tmp_path / "handoff.zip"
+    src.write_bytes(b"zipbytes")
+    result = c.upload(src, dry_run=True)
+    assert result["success"] and result["dry_run"]
+    assert result["file_count"] == 1 and result["folder_count"] == 0
+    c.drive.files.return_value.create.assert_not_called()
+
+
+def test_upload_directory_creates_folders_and_files(tmp_path):
+    c = client()
+    root = tmp_path / "handoff"
+    (root / "sub").mkdir(parents=True)
+    (root / "README.md").write_text("hi")
+    (root / "sub" / "code.py").write_text("print(1)")
+    (root / ".DS_Store").write_text("junk")
+
+    created_ids = iter(["folder-top", "folder-sub", "file-1", "file-2"])
+    def create(**kwargs):
+        request = MagicMock()
+        request.execute.return_value = {"id": next(created_ids),
+                                        "name": kwargs.get("body", {}).get("name"),
+                                        "webViewLink": "https://drive.example/x"}
+        return request
+    c.drive.files.return_value.create.side_effect = create
+    c.drive.files.return_value.get.return_value.execute.return_value = {"webViewLink": "https://drive.example/root"}
+
+    result = c.upload(root)
+    assert result["success"]
+    names = [item["name"] for item in result["files"]]
+    assert ".DS_Store" not in names
+    assert result["folder_id"] == "folder-top"
+    assert sum(item["type"] == "folder" for item in result["files"]) == 1
+    assert sum(item["type"] == "file" for item in result["files"]) == 2
+
+
+def test_cli_upload_with_share(tmp_path):
+    src = tmp_path / "handoff.zip"
+    src.write_bytes(b"zip")
+    with patch("gdocs.__main__.DriveClient") as cls:
+        cls.return_value.upload.return_value = {"success": True, "folder_id": "fold", "share_target_id": "file-1"}
+        cls.return_value.share.return_value = {"success": True, "file_id": "fold"}
+        assert main(["drive", "upload", str(src), "--share", "partner@example.com", "--role", "writer"]) == 0
+    cls.return_value.share.assert_called_once_with("file-1", "partner@example.com", role="writer")
+
+
+def test_upload_single_file_share_target_is_the_file(tmp_path):
+    c = client()
+    src = tmp_path / "handoff.zip"
+    src.write_bytes(b"zip")
+    c.drive.files.return_value.create.return_value.execute.return_value = {"id": "file-9", "name": "handoff.zip"}
+    result = c.upload(src, folder_id="dest-folder")
+    assert result["share_target_id"] == "file-9"
+    assert result["folder_id"] == "dest-folder"
+
+
+def test_upload_directory_share_target_is_top_folder(tmp_path):
+    c = client()
+    root = tmp_path / "handoff"
+    root.mkdir()
+    (root / "a.txt").write_text("a")
+    ids = iter(["top", "file-1"])
+    c.drive.files.return_value.create.side_effect = lambda **kw: MagicMock(
+        execute=MagicMock(return_value={"id": next(ids)}))
+    assert c.upload(root)["share_target_id"] == "top"
+
+
+def test_cli_upload_dry_run_never_shares(tmp_path):
+    src = tmp_path / "handoff.zip"
+    src.write_bytes(b"zip")
+    with patch("gdocs.__main__.DriveClient") as cls:
+        cls.return_value.upload.return_value = {"success": True, "dry_run": True}
+        assert main(["drive", "upload", str(src), "--share", "partner@example.com", "--dry-run"]) == 0
+    cls.return_value.share.assert_not_called()
+
+
 def test_drive_auth_failure_preserves_token_and_uses_timeout(tmp_path):
     (tmp_path / "credentials.json").write_text("{}")
     token = json.dumps({"scopes": SCOPES, "token": "old"})

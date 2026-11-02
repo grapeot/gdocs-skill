@@ -146,11 +146,11 @@ python -m gdocs gmail search "from:user@example.com newer_than:7d"
 python -m gdocs gmail inspect --gmail-id MSG_ID --thread
 
 # Send an email; use --dry-run first when testing
-python -m gdocs gmail draft --subject "Hello" --body-file body.md
-python -m gdocs gmail send --to user@example.com --subject "Hello" --body-file body.md --dry-run
+python -m gdocs gmail draft --subject "Hello" --body-file body.html
+python -m gdocs gmail send --to user@example.com --subject "Hello" --body-file body.html --dry-run
 
 # Save a reply-all draft in an existing Gmail thread without sending
-python -m gdocs gmail reply --gmail-id MSG_ID --body-file reply.md --reply-all --draft
+python -m gdocs gmail reply --gmail-id MSG_ID --body-file reply.html --reply-all --draft
 
 # Create a Calendar event and invite attendees
 python -m gdocs calendar create-event --summary "Planning" --start "2026-05-20T10:00:00-07:00" --end "2026-05-20T10:30:00-07:00" --attendee user@example.com
